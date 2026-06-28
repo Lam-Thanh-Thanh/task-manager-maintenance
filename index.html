@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Manager</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <main class="app">
+        <header class="app-header">
+            <h1>Task Manager</h1>
+            <p>Ứng dụng quản lý công việc đơn giản</p>
+        </header>
+
+        <section class="task-form" aria-label="Thêm công việc mới">
+            <input id="taskInput" type="text" placeholder="Nhập tên công việc">
+            <button id="addTaskButton" type="button">Thêm</button>
+        </section>
+
+        <section class="task-section" aria-label="Danh sách công việc">
+            <h2>Danh sách công việc</h2>
+            <ul id="taskList"></ul>
+        </section>
+
+        <section class="task-stats" aria-label="Thống kê công việc">
+            <p>Tổng số công việc: <span id="totalTasks">0</span></p>
+            <p>Đã hoàn thành: <span id="completedTasks">0</span></p>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>
