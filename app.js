@@ -22,10 +22,31 @@ function saveTasks() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
 }
 
-function addTask() {
+/*function addTask() {
     const task = {
         id: Date.now(),
         name: taskInput.value,
+        completed: false
+    };
+
+    tasks.push(task);
+    saveTasks();
+    renderTasks();
+    taskInput.value = "";
+    taskInput.focus();
+}*/
+function addTask() {
+    const taskName = taskInput.value.trim();
+
+    if (taskName === "") {
+        alert("Vui lòng nhập tên công việc.");
+        taskInput.focus();
+        return;
+    }
+
+    const task = {
+        id: Date.now(),
+        name: taskName,
         completed: false
     };
 
