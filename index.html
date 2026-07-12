@@ -23,9 +23,36 @@
             <button id="addTaskButton" type="button">Thêm</button>
         </section>
 
+        <section class="task-tools" aria-label="Tìm kiếm, lọc và sắp xếp công việc">
+            <label class="search-control" for="searchInput">
+                <span>Tìm kiếm</span>
+                <input id="searchInput" type="search" placeholder="Nhập tên công việc cần tìm">
+            </label>
+            <label for="filterSelect">
+                <span>Lọc</span>
+                <select id="filterSelect">
+                    <option value="all">Tất cả</option>
+                    <option value="pending">Chưa hoàn thành</option>
+                    <option value="completed">Đã hoàn thành</option>
+                </select>
+            </label>
+            <label for="sortSelect">
+                <span>Sắp xếp</span>
+                <select id="sortSelect">
+                    <option value="newest">Mới nhất</option>
+                    <option value="oldest">Cũ nhất</option>
+                    <option value="name-asc">Tên A–Z</option>
+                    <option value="name-desc">Tên Z–A</option>
+                </select>
+            </label>
+        </section>
+
         <section class="task-section" aria-label="Danh sách công việc">
             <h2>Danh sách công việc</h2>
             <ul id="taskList"></ul>
+            <p id="noResultsMessage" class="no-results-message" hidden>
+                Không tìm thấy công việc phù hợp.
+            </p>
         </section>
 
         <section class="backup-restore-section" aria-labelledby="backupRestoreTitle">

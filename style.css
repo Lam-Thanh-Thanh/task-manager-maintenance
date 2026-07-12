@@ -138,6 +138,46 @@ input:disabled {
     background: #1d4ed8;
 }
 
+.task-tools {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(150px, 1fr) minmax(150px, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+    padding: 16px;
+    border: 1px solid #dbe3ee;
+    border-radius: 7px;
+    background: #f8fafc;
+}
+
+.task-tools label {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #334155;
+}
+
+.task-tools input,
+.task-tools select {
+    width: 100%;
+    min-width: 0;
+    height: 40px;
+    padding: 0 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    color: #111827;
+    background: #ffffff;
+}
+
+.task-tools input:focus,
+.task-tools select:focus,
+.edit-task-input:focus {
+    border-color: #2563eb;
+    outline: 3px solid rgba(37, 99, 235, 0.16);
+}
+
 .task-section {
     padding-top: 8px;
 }
@@ -158,6 +198,10 @@ input:disabled {
     list-style: none;
 }
 
+#taskList.task-list-empty {
+    min-height: 0;
+}
+
 .task-item {
     display: flex;
     align-items: center;
@@ -172,6 +216,7 @@ input:disabled {
 .task-content {
     display: flex;
     align-items: center;
+    flex: 1;
     gap: 10px;
     min-width: 0;
 }
@@ -186,12 +231,24 @@ input:disabled {
     overflow-wrap: anywhere;
 }
 
+.edit-task-input {
+    flex: 1;
+    min-width: 0;
+    height: 38px;
+    padding: 0 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    color: #111827;
+    background: #ffffff;
+}
+
 .task-item.completed .task-name {
     color: #64748b;
     text-decoration: line-through;
 }
 
 .delete-button {
+    order: 2;
     flex: 0 0 auto;
     padding: 8px 12px;
     border: 1px solid #fecaca;
@@ -201,9 +258,71 @@ input:disabled {
     cursor: pointer;
 }
 
-.delete-button:hover {
+.delete-button:hover:not(:disabled) {
     color: #ffffff;
     background: #dc2626;
+}
+
+.edit-button,
+.save-button,
+.cancel-button {
+    flex: 0 0 auto;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.edit-button {
+    order: 1;
+    border: 1px solid #bfdbfe;
+    color: #1d4ed8;
+    background: #eff6ff;
+}
+
+.edit-button:hover:not(:disabled) {
+    color: #ffffff;
+    background: #2563eb;
+}
+
+.save-button {
+    border: 1px solid #86efac;
+    color: #166534;
+    background: #f0fdf4;
+}
+
+.save-button:hover:not(:disabled) {
+    color: #ffffff;
+    background: #16a34a;
+}
+
+.cancel-button {
+    border: 1px solid #cbd5e1;
+    color: #334155;
+    background: #f8fafc;
+}
+
+.cancel-button:hover {
+    background: #e2e8f0;
+}
+
+.no-results-message {
+    margin: 20px 0 36px;
+    text-align: center;
+    color: #64748b;
+}
+
+@media (max-width: 680px) {
+    .task-tools {
+        grid-template-columns: 1fr;
+    }
+
+    .task-item {
+        flex-wrap: wrap;
+    }
+
+    .task-content {
+        flex-basis: 100%;
+    }
 }
 
 .backup-restore-section {
