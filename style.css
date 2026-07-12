@@ -15,6 +15,12 @@ input {
     font: inherit;
 }
 
+button:disabled,
+input:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
 .app {
     width: min(760px, calc(100% - 48px));
     margin: 48px auto;
@@ -58,6 +64,22 @@ input {
 
 .storage-warning[hidden] {
     display: none;
+}
+
+.storage-warning.storage-notice-success {
+    border-color: #22c55e;
+    color: #14532d;
+    background: #f0fdf4;
+}
+
+.storage-warning.storage-notice-success button {
+    border-color: #16a34a;
+    color: #14532d;
+}
+
+.storage-warning.storage-notice-success button:hover {
+    color: #ffffff;
+    background: #15803d;
 }
 
 .storage-warning p {

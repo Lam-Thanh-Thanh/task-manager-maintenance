@@ -1,5 +1,7 @@
 const STORAGE_KEY = "taskManagerTasks";
 const CORRUPTED_STORAGE_PREFIX = STORAGE_KEY + "_corrupted_";
+const MIGRATION_BACKUP_PREFIX = STORAGE_KEY + "_migration_backup_";
+const STORAGE_VERSION = 2;
 
 const taskInput = document.getElementById("taskInput");
 const addTaskButton = document.getElementById("addTaskButton");
@@ -10,6 +12,8 @@ const storageWarning = document.getElementById("storageWarning");
 const storageWarningMessage = document.getElementById("storageWarningMessage");
 const closeStorageWarningButton = document.getElementById("closeStorageWarningButton");
 
+let storageWritesEnabled = true;
+let readOnlyMode = false;
 let tasks = loadTasks();
 
 function isValidTask(task) {
@@ -27,27 +31,57 @@ function isValidTask(task) {
         typeof task.completed === "boolean";
 }
 
-function parseStoredTasks(savedTasks) {
+function isValidIsoDateTime(value) {
+    const isoDateTimePattern =
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})$/;
+
+    return typeof value === "string" &&
+        isoDateTimePattern.test(value) &&
+        !Number.isNaN(Date.parse(value));
+}
+
+function isValidVersion2Task(task) {
+    if (!isValidTask(task) ||
+        !isValidIsoDateTime(task.createdAt) ||
+        !isValidIsoDateTime(task.updatedAt)) {
+        return false;
+    }
+
+    return Date.parse(task.updatedAt) >= Date.parse(task.createdAt);
+}
+
+function isValidVersion2Storage(storedData) {
+    return typeof storedData === "object" &&
+        storedData !== null &&
+        !Array.isArray(storedData) &&
+        storedData.version === STORAGE_VERSION &&
+        Array.isArray(storedData.tasks) &&
+        storedData.tasks.every(isValidVersion2Task);
+}
+
+function isFutureVersion(storedData) {
+    return typeof storedData === "object" &&
+        storedData !== null &&
+        !Array.isArray(storedData) &&
+        Number.isInteger(storedData.version) &&
+        storedData.version > STORAGE_VERSION;
+}
+
+function parseStoredData(savedTasks) {
     try {
-        const parsedTasks = JSON.parse(savedTasks);
-
-        if (!Array.isArray(parsedTasks) || !parsedTasks.every(isValidTask)) {
-            return { isValid: false, tasks: [] };
-        }
-
-        return { isValid: true, tasks: parsedTasks };
+        return { isValidJson: true, data: JSON.parse(savedTasks) };
     } catch (error) {
-        return { isValid: false, tasks: [] };
+        return { isValidJson: false, data: null };
     }
 }
 
-function createCorruptedStorageKey() {
+function createUniqueStorageKey(prefix) {
     const timestamp = Date.now();
-    let backupKey = CORRUPTED_STORAGE_PREFIX + timestamp;
+    let backupKey = prefix + timestamp;
     let suffix = 1;
 
     while (localStorage.getItem(backupKey) !== null) {
-        backupKey = CORRUPTED_STORAGE_PREFIX + timestamp + "_" + suffix;
+        backupKey = prefix + timestamp + "_" + suffix;
         suffix += 1;
     }
 
@@ -58,7 +92,7 @@ function quarantineCorruptedData(savedTasks) {
     let backupKey;
 
     try {
-        backupKey = createCorruptedStorageKey();
+        backupKey = createUniqueStorageKey(CORRUPTED_STORAGE_PREFIX);
         localStorage.setItem(backupKey, savedTasks);
     } catch (error) {
         return { backupCreated: false, originalRemoved: false };
@@ -69,6 +103,93 @@ function quarantineCorruptedData(savedTasks) {
         return { backupCreated: true, originalRemoved: true, backupKey };
     } catch (error) {
         return { backupCreated: true, originalRemoved: false, backupKey };
+    }
+}
+
+function createMigrationBackup(savedTasks) {
+    try {
+        const backupKey = createUniqueStorageKey(MIGRATION_BACKUP_PREFIX);
+        localStorage.setItem(backupKey, savedTasks);
+        return { success: true, backupKey };
+    } catch (error) {
+        return { success: false };
+    }
+}
+
+function inferTimestampFromId(taskId) {
+    let timestamp;
+
+    if (typeof taskId === "number") {
+        timestamp = taskId;
+    } else if (/^\d+$/.test(taskId.trim())) {
+        timestamp = Number(taskId);
+    } else {
+        return null;
+    }
+
+    if (!Number.isFinite(timestamp)) {
+        return null;
+    }
+
+    if (timestamp >= 946684800 && timestamp < 10000000000) {
+        timestamp *= 1000;
+    }
+
+    if (timestamp < 946684800000 || timestamp > 253402300799999) {
+        return null;
+    }
+
+    return Number.isNaN(new Date(timestamp).getTime()) ? null : timestamp;
+}
+
+function createMigratedTasks(legacyTasks) {
+    const fallbackTimestamp = Date.now();
+
+    return legacyTasks.map(function(task, index) {
+        const inferredTimestamp = inferTimestampFromId(task.id);
+        const createdAt = new Date(
+            inferredTimestamp === null ? fallbackTimestamp + index : inferredTimestamp
+        ).toISOString();
+
+        return Object.assign({}, task, {
+            createdAt,
+            updatedAt: createdAt
+        });
+    });
+}
+
+function migrateLegacyTasks(legacyTasks, savedTasks) {
+    const backupResult = createMigrationBackup(savedTasks);
+
+    if (!backupResult.success) {
+        return { success: false, reason: "backup-failed", tasks: legacyTasks };
+    }
+
+    try {
+        const migratedTasks = createMigratedTasks(legacyTasks);
+        const versionedData = {
+            version: STORAGE_VERSION,
+            tasks: migratedTasks
+        };
+
+        if (!isValidVersion2Storage(versionedData)) {
+            throw new Error("Du lieu sau migration khong hop le");
+        }
+
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(versionedData));
+
+        return {
+            success: true,
+            tasks: migratedTasks,
+            backupKey: backupResult.backupKey
+        };
+    } catch (error) {
+        return {
+            success: false,
+            reason: "migration-failed",
+            tasks: legacyTasks,
+            backupKey: backupResult.backupKey
+        };
     }
 }
 
@@ -93,12 +214,54 @@ function showStorageReadWarning() {
     storageWarning.hidden = false;
 }
 
+function showMigrationSuccess() {
+    storageWarningMessage.textContent =
+        "Dữ liệu công việc đã được nâng cấp thành công. Một bản sao dữ liệu cũ cũng đã được lưu an toàn.";
+    storageWarning.classList.add("storage-notice-success");
+    storageWarning.hidden = false;
+}
+
+function showMigrationFailure(reason) {
+    if (reason === "backup-failed") {
+        storageWarningMessage.textContent =
+            "Chưa thể sao lưu dữ liệu cũ nên quá trình nâng cấp đã dừng. Dữ liệu gốc được giữ nguyên và các thay đổi trong phiên này sẽ không được lưu.";
+    } else {
+        storageWarningMessage.textContent =
+            "Không thể hoàn tất nâng cấp dữ liệu. Dữ liệu gốc và bản sao an toàn được giữ nguyên; các thay đổi trong phiên này sẽ không được lưu.";
+    }
+
+    storageWarning.hidden = false;
+}
+
+function showFutureVersionWarning() {
+    storageWarningMessage.textContent =
+        "Chế độ chỉ đọc: Dữ liệu được tạo bởi phiên bản mới hơn của ứng dụng. Các thao tác chỉnh sửa đã bị vô hiệu hóa và dữ liệu được giữ nguyên.";
+    storageWarning.hidden = false;
+}
+
+function enableReadOnlyMode() {
+    readOnlyMode = true;
+    storageWritesEnabled = false;
+    taskInput.disabled = true;
+    addTaskButton.disabled = true;
+    closeStorageWarningButton.hidden = true;
+}
+
+function getReadableFutureTasks(storedData) {
+    if (!Array.isArray(storedData.tasks) || !storedData.tasks.every(isValidTask)) {
+        return [];
+    }
+
+    return storedData.tasks;
+}
+
 function loadTasks() {
     let savedTasks;
 
     try {
         savedTasks = localStorage.getItem(STORAGE_KEY);
     } catch (error) {
+        storageWritesEnabled = false;
         showStorageReadWarning();
         return [];
     }
@@ -107,10 +270,41 @@ function loadTasks() {
         return [];
     }
 
-    const parseResult = parseStoredTasks(savedTasks);
+    const parseResult = parseStoredData(savedTasks);
 
-    if (parseResult.isValid) {
-        return parseResult.tasks;
+    if (!parseResult.isValidJson) {
+        showStorageWarning(quarantineCorruptedData(savedTasks));
+        return [];
+    }
+
+    const storedData = parseResult.data;
+
+    if (Array.isArray(storedData)) {
+        if (!storedData.every(isValidTask)) {
+            showStorageWarning(quarantineCorruptedData(savedTasks));
+            return [];
+        }
+
+        const migrationResult = migrateLegacyTasks(storedData, savedTasks);
+
+        if (migrationResult.success) {
+            showMigrationSuccess();
+            return migrationResult.tasks;
+        }
+
+        storageWritesEnabled = false;
+        showMigrationFailure(migrationResult.reason);
+        return migrationResult.tasks;
+    }
+
+    if (isFutureVersion(storedData)) {
+        enableReadOnlyMode();
+        showFutureVersionWarning();
+        return getReadableFutureTasks(storedData);
+    }
+
+    if (isValidVersion2Storage(storedData)) {
+        return storedData.tasks;
     }
 
     showStorageWarning(quarantineCorruptedData(savedTasks));
@@ -118,7 +312,28 @@ function loadTasks() {
 }
 
 function saveTasks() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+    if (!storageWritesEnabled) {
+        return;
+    }
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        version: STORAGE_VERSION,
+        tasks
+    }));
+}
+
+function createCurrentTimestamp() {
+    return new Date(Date.now()).toISOString();
+}
+
+function createUpdatedTimestamp(task) {
+    const currentTimestamp = Date.now();
+    const createdTimestamp = Date.parse(task.createdAt);
+    const updatedTimestamp = Number.isNaN(createdTimestamp)
+        ? currentTimestamp
+        : Math.max(currentTimestamp, createdTimestamp);
+
+    return new Date(updatedTimestamp).toISOString();
 }
 
 /*function addTask() {
@@ -135,6 +350,10 @@ function saveTasks() {
     taskInput.focus();
 }*/
 function addTask() {
+    if (readOnlyMode) {
+        return;
+    }
+
     const taskName = taskInput.value.trim();
 
     if (taskName === "") {
@@ -143,10 +362,13 @@ function addTask() {
         return;
     }
 
+    const timestamp = createCurrentTimestamp();
     const task = {
         id: Date.now(),
         name: taskName,
-        completed: false
+        completed: false,
+        createdAt: timestamp,
+        updatedAt: timestamp
     };
 
     tasks.push(task);
@@ -157,13 +379,16 @@ function addTask() {
 }
 
 function toggleTask(taskId) {
+    if (readOnlyMode) {
+        return;
+    }
+
     tasks = tasks.map(function(task) {
         if (task.id === taskId) {
-            return {
-                id: task.id,
-                name: task.name,
-                completed: !task.completed
-            };
+            return Object.assign({}, task, {
+                completed: !task.completed,
+                updatedAt: createUpdatedTimestamp(task)
+            });
         }
 
         return task;
@@ -174,6 +399,10 @@ function toggleTask(taskId) {
 }
 
 function deleteTask(taskId) {
+    if (readOnlyMode) {
+        return;
+    }
+
     tasks = tasks.filter(function(task) {
         return task.id !== taskId;
     });
@@ -199,6 +428,7 @@ function renderTasks() {
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.checked = task.completed;
+        checkbox.disabled = readOnlyMode;
         checkbox.addEventListener("change", function() {
             toggleTask(task.id);
         });
@@ -211,6 +441,7 @@ function renderTasks() {
         deleteButton.type = "button";
         deleteButton.className = "delete-button";
         deleteButton.textContent = "Xóa";
+        deleteButton.disabled = readOnlyMode;
         deleteButton.addEventListener("click", function() {
             deleteTask(task.id);
         });
@@ -237,6 +468,10 @@ function renderStats() {
 addTaskButton.addEventListener("click", addTask);
 
 closeStorageWarningButton.addEventListener("click", function() {
+    if (readOnlyMode) {
+        return;
+    }
+
     storageWarning.hidden = true;
 });
 
