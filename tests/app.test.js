@@ -18,6 +18,7 @@ function createElement(tagName) {
         type: "",
         checked: false,
         value: "",
+        disabled: false,
         hidden: false,
         events: {},
         classList: {
@@ -279,6 +280,10 @@ test("Legacy co du lieu duoc migration va bao toan noi dung thu tu", function() 
     assert.strictEqual(elements.taskList.children.length, 3);
     assert.strictEqual(elements.totalTasks.textContent, 3);
     assert.strictEqual(elements.completedTasks.textContent, 1);
+    assert.strictEqual(elements.taskInput.disabled, false);
+    assert.strictEqual(elements.addTaskButton.disabled, false);
+    assert.strictEqual(elements.taskList.children[0].children[0].children[0].disabled, false);
+    assert.strictEqual(elements.taskList.children[0].children[1].disabled, false);
 });
 
 test("Migration suy ra timestamp tu id va gan fallback tuan tu", function() {
@@ -326,6 +331,10 @@ test("Version 2 hop le duoc tai truc tiep khong ghi lai", function() {
     }), false);
     assert.strictEqual(elements.taskList.children.length, 1);
     assert.strictEqual(elements.storageWarning.hidden, true);
+    assert.strictEqual(elements.taskInput.disabled, false);
+    assert.strictEqual(elements.addTaskButton.disabled, false);
+    assert.strictEqual(elements.taskList.children[0].children[0].children[0].disabled, false);
+    assert.strictEqual(elements.taskList.children[0].children[1].disabled, false);
 });
 
 test("Migration khong chay lap va thong bao chi hien mot lan", function() {
@@ -405,21 +414,56 @@ test("Migration that bai giu legacy va ban sao", function() {
 });
 
 test("Version tuong lai duoc giu nguyen va khong ghi lai", function() {
-    const payload = JSON.stringify({ version: 3, tasks: [{ future: true }] });
+    const futureTask = createVersion2Task({ futureMetadata: "giu-nguyen" });
+    const payload = JSON.stringify({ version: 3, tasks: [futureTask] });
     const result = createContextWithPayload(payload);
+    const checkbox = result.elements.taskList.children[0].children[0].children[0];
+    const deleteButton = result.elements.taskList.children[0].children[1];
 
     assert.strictEqual(result.storage[STORAGE_KEY], payload);
     assert.strictEqual(getMigrationBackupKeys(result.storage).length, 0);
     assert.strictEqual(getCorruptedBackupKeys(result.storage).length, 0);
-    assert.strictEqual(result.elements.taskList.children.length, 0);
+    assert.strictEqual(result.elements.taskList.children.length, 1);
+    assert.strictEqual(result.elements.totalTasks.textContent, 1);
+    assert.strictEqual(result.elements.completedTasks.textContent, 0);
     assert.strictEqual(result.elements.storageWarning.hidden, false);
+    assert.ok(result.elements.storageWarningMessage.textContent.includes("Chế độ chỉ đọc"));
+    assert.strictEqual(result.elements.closeStorageWarningButton.hidden, true);
+    assert.strictEqual(result.elements.taskInput.disabled, true);
+    assert.strictEqual(result.elements.addTaskButton.disabled, true);
+    assert.strictEqual(checkbox.disabled, true);
+    assert.strictEqual(deleteButton.disabled, true);
     assert.strictEqual(result.storageOperations.some(function(operation) {
         return operation.type === "set" || operation.type === "remove";
     }), false);
 
+    result.elements.closeStorageWarningButton.events.click();
+    assert.strictEqual(result.elements.storageWarning.hidden, false);
+
     result.elements.taskInput.value = "Khong duoc ghi de";
     result.elements.addTaskButton.events.click();
+    checkbox.events.change();
+    deleteButton.events.click();
+
     assert.strictEqual(result.storage[STORAGE_KEY], payload);
+    assert.strictEqual(result.elements.taskList.children.length, 1);
+    assert.strictEqual(result.elements.completedTasks.textContent, 0);
+    assert.strictEqual(result.storageOperations.some(function(operation) {
+        return operation.type === "set" || operation.type === "remove";
+    }), false);
+});
+
+test("Version tuong lai co task khong doc duoc van o che do chi doc", function() {
+    const payload = JSON.stringify({ version: 3, tasks: [{ future: true }] });
+    const result = createContextWithPayload(payload);
+
+    assert.strictEqual(result.storage[STORAGE_KEY], payload);
+    assert.strictEqual(result.elements.taskList.children.length, 0);
+    assert.strictEqual(result.elements.storageWarning.hidden, false);
+    assert.ok(result.elements.storageWarningMessage.textContent.includes("Chế độ chỉ đọc"));
+    assert.strictEqual(result.elements.closeStorageWarningButton.hidden, true);
+    assert.strictEqual(result.elements.taskInput.disabled, true);
+    assert.strictEqual(result.elements.addTaskButton.disabled, true);
 });
 
 test("Version 2 metadata khong hop le duoc cach ly boi RQ-001", function() {
@@ -481,6 +525,69 @@ test("Legacy chua task khong hop le bi cach ly", function() {
         '[{"id":1,"name":"   ","completed":false}]',
         '[{"id":1,"name":"Cong viec","completed":"false"}]'
     ].forEach(assertInvalidPayloadIsQuarantined);
+});
+
+test("RQ-001 tu choi id chuoi rong", function() {
+    assertInvalidPayloadIsQuarantined(
+        '[{"id":"   ","name":"Cong viec","completed":false}]'
+    );
+});
+
+test("RQ-001 tu choi id sai kieu", function() {
+    assertInvalidPayloadIsQuarantined(
+        '[{"id":true,"name":"Cong viec","completed":false}]'
+    );
+});
+
+test("RQ-001 tu choi task thieu name hoac completed", function() {
+    assertInvalidPayloadIsQuarantined('[{"id":1,"completed":false}]');
+    assertInvalidPayloadIsQuarantined('[{"id":1,"name":"Cong viec"}]');
+});
+
+test("RQ-001 tu choi name sai kieu", function() {
+    assertInvalidPayloadIsQuarantined(
+        '[{"id":1,"name":123,"completed":false}]'
+    );
+});
+
+test("RQ-001 backup thanh cong truoc khi xoa khoa chinh", function() {
+    const result = createContextWithPayload("{broken");
+    const backupIndex = result.storageOperations.findIndex(function(operation) {
+        return operation.type === "set" &&
+            operation.key.startsWith(CORRUPTED_STORAGE_PREFIX);
+    });
+    const removeIndex = result.storageOperations.findIndex(function(operation) {
+        return operation.type === "remove" && operation.key === STORAGE_KEY;
+    });
+
+    assert.notStrictEqual(backupIndex, -1);
+    assert.notStrictEqual(removeIndex, -1);
+    assert.ok(backupIndex < removeIndex);
+});
+
+test("RQ-001 giu khoa chinh khi xoa that bai sau backup", function() {
+    const payload = "{broken";
+    const result = createContextWithPayload(payload, { failPrimaryRemove: true });
+
+    assert.strictEqual(result.storage[STORAGE_KEY], payload);
+    assert.strictEqual(getCorruptedBackupKeys(result.storage).length, 1);
+    assert.strictEqual(
+        result.storage[getCorruptedBackupKeys(result.storage)[0]],
+        payload
+    );
+    assert.ok(result.elements.storageWarningMessage.textContent.includes("chưa thể xóa"));
+});
+
+test("RQ-001 khong ghi de backup trung timestamp", function() {
+    const existingBackupKey = CORRUPTED_STORAGE_PREFIX + DEFAULT_NOW;
+    const result = createContextWithPayload("{broken", {
+        initialStorage: {
+            [existingBackupKey]: "ban sao cu"
+        }
+    });
+
+    assert.strictEqual(result.storage[existingBackupKey], "ban sao cu");
+    assert.strictEqual(result.storage[existingBackupKey + "_1"], "{broken");
 });
 
 test("Du lieu loi khong lam dung khoi tao ung dung", function() {

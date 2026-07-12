@@ -13,6 +13,7 @@ const storageWarningMessage = document.getElementById("storageWarningMessage");
 const closeStorageWarningButton = document.getElementById("closeStorageWarningButton");
 
 let storageWritesEnabled = true;
+let readOnlyMode = false;
 let tasks = loadTasks();
 
 function isValidTask(task) {
@@ -234,8 +235,24 @@ function showMigrationFailure(reason) {
 
 function showFutureVersionWarning() {
     storageWarningMessage.textContent =
-        "Dữ liệu được tạo bởi phiên bản mới hơn của ứng dụng. Dữ liệu được giữ nguyên và các thay đổi trong phiên này sẽ không được lưu.";
+        "Chế độ chỉ đọc: Dữ liệu được tạo bởi phiên bản mới hơn của ứng dụng. Các thao tác chỉnh sửa đã bị vô hiệu hóa và dữ liệu được giữ nguyên.";
     storageWarning.hidden = false;
+}
+
+function enableReadOnlyMode() {
+    readOnlyMode = true;
+    storageWritesEnabled = false;
+    taskInput.disabled = true;
+    addTaskButton.disabled = true;
+    closeStorageWarningButton.hidden = true;
+}
+
+function getReadableFutureTasks(storedData) {
+    if (!Array.isArray(storedData.tasks) || !storedData.tasks.every(isValidTask)) {
+        return [];
+    }
+
+    return storedData.tasks;
 }
 
 function loadTasks() {
@@ -281,9 +298,9 @@ function loadTasks() {
     }
 
     if (isFutureVersion(storedData)) {
-        storageWritesEnabled = false;
+        enableReadOnlyMode();
         showFutureVersionWarning();
-        return [];
+        return getReadableFutureTasks(storedData);
     }
 
     if (isValidVersion2Storage(storedData)) {
@@ -333,6 +350,10 @@ function createUpdatedTimestamp(task) {
     taskInput.focus();
 }*/
 function addTask() {
+    if (readOnlyMode) {
+        return;
+    }
+
     const taskName = taskInput.value.trim();
 
     if (taskName === "") {
@@ -358,6 +379,10 @@ function addTask() {
 }
 
 function toggleTask(taskId) {
+    if (readOnlyMode) {
+        return;
+    }
+
     tasks = tasks.map(function(task) {
         if (task.id === taskId) {
             return Object.assign({}, task, {
@@ -374,6 +399,10 @@ function toggleTask(taskId) {
 }
 
 function deleteTask(taskId) {
+    if (readOnlyMode) {
+        return;
+    }
+
     tasks = tasks.filter(function(task) {
         return task.id !== taskId;
     });
@@ -399,6 +428,7 @@ function renderTasks() {
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.checked = task.completed;
+        checkbox.disabled = readOnlyMode;
         checkbox.addEventListener("change", function() {
             toggleTask(task.id);
         });
@@ -411,6 +441,7 @@ function renderTasks() {
         deleteButton.type = "button";
         deleteButton.className = "delete-button";
         deleteButton.textContent = "Xóa";
+        deleteButton.disabled = readOnlyMode;
         deleteButton.addEventListener("click", function() {
             deleteTask(task.id);
         });
@@ -437,6 +468,10 @@ function renderStats() {
 addTaskButton.addEventListener("click", addTask);
 
 closeStorageWarningButton.addEventListener("click", function() {
+    if (readOnlyMode) {
+        return;
+    }
+
     storageWarning.hidden = true;
 });
 

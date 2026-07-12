@@ -15,6 +15,12 @@ input {
     font: inherit;
 }
 
+button:disabled,
+input:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
 .app {
     width: min(760px, calc(100% - 48px));
     margin: 48px auto;
