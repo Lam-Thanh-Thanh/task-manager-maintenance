@@ -43,6 +43,43 @@ input {
     color: #64748b;
 }
 
+.storage-warning {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 24px;
+    padding: 14px 16px;
+    border: 1px solid #f59e0b;
+    border-radius: 6px;
+    color: #78350f;
+    background: #fffbeb;
+}
+
+.storage-warning[hidden] {
+    display: none;
+}
+
+.storage-warning p {
+    margin: 0;
+    line-height: 1.5;
+}
+
+.storage-warning button {
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    border: 1px solid #d97706;
+    border-radius: 5px;
+    color: #78350f;
+    background: #ffffff;
+    cursor: pointer;
+}
+
+.storage-warning button:hover {
+    color: #ffffff;
+    background: #b45309;
+}
+
 .task-form {
     display: flex;
     gap: 12px;
