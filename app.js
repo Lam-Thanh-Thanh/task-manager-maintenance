@@ -11,6 +11,10 @@ const addTaskButton = document.getElementById("addTaskButton");
 const taskList = document.getElementById("taskList");
 const totalTasks = document.getElementById("totalTasks");
 const completedTasks = document.getElementById("completedTasks");
+const searchInput = document.getElementById("searchInput");
+const filterSelect = document.getElementById("filterSelect");
+const sortSelect = document.getElementById("sortSelect");
+const noResultsMessage = document.getElementById("noResultsMessage");
 const storageWarning = document.getElementById("storageWarning");
 const storageWarningMessage = document.getElementById("storageWarningMessage");
 const closeStorageWarningButton = document.getElementById("closeStorageWarningButton");
@@ -22,6 +26,10 @@ const restoreReadOnlyHint = document.getElementById("restoreReadOnlyHint");
 
 let storageWritesEnabled = true;
 let readOnlyMode = false;
+let searchQuery = "";
+let selectedFilter = "all";
+let selectedSort = "newest";
+let editingTaskId = null;
 let tasks = loadTasks();
 
 function isValidTask(task) {
@@ -513,6 +521,7 @@ function restoreVersion2Data(version2Data) {
     }
 
     storageWritesEnabled = true;
+    editingTaskId = null;
     tasks = version2Data.tasks.map(function(task) {
         return Object.assign({}, task);
     });
@@ -601,6 +610,115 @@ function createUpdatedTimestamp(task) {
     return new Date(updatedTimestamp).toISOString();
 }
 
+function normalizeSearchValue(value) {
+    return value.trim().toLocaleLowerCase("vi");
+}
+
+function taskMatchesCurrentView(task) {
+    const matchesSearch = searchQuery === "" ||
+        task.name.toLocaleLowerCase("vi").includes(searchQuery);
+    let matchesFilter = true;
+
+    if (selectedFilter === "pending") {
+        matchesFilter = !task.completed;
+    } else if (selectedFilter === "completed") {
+        matchesFilter = task.completed;
+    }
+
+    return matchesSearch && matchesFilter;
+}
+
+function getTaskCreatedTimestamp(task) {
+    const timestamp = Date.parse(task.createdAt);
+    return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function getVisibleTasks() {
+    const visibleTasks = tasks.map(function(task, originalIndex) {
+        return { task, originalIndex };
+    }).filter(function(item) {
+        return taskMatchesCurrentView(item.task);
+    });
+
+    visibleTasks.sort(function(first, second) {
+        let comparison = 0;
+
+        if (selectedSort === "oldest") {
+            comparison = getTaskCreatedTimestamp(first.task) -
+                getTaskCreatedTimestamp(second.task);
+        } else if (selectedSort === "name-asc") {
+            comparison = first.task.name.localeCompare(
+                second.task.name,
+                "vi",
+                { sensitivity: "base" }
+            );
+        } else if (selectedSort === "name-desc") {
+            comparison = second.task.name.localeCompare(
+                first.task.name,
+                "vi",
+                { sensitivity: "base" }
+            );
+        } else {
+            comparison = getTaskCreatedTimestamp(second.task) -
+                getTaskCreatedTimestamp(first.task);
+        }
+
+        return comparison === 0
+            ? first.originalIndex - second.originalIndex
+            : comparison;
+    });
+
+    return visibleTasks.map(function(item) {
+        return item.task;
+    });
+}
+
+function startEditingTask(taskId) {
+    if (readOnlyMode || !tasks.some(function(task) { return task.id === taskId; })) {
+        return;
+    }
+
+    editingTaskId = taskId;
+    renderTasks();
+}
+
+function cancelTaskEdit(taskId) {
+    if (editingTaskId !== taskId) {
+        return;
+    }
+
+    editingTaskId = null;
+    renderTasks();
+}
+
+function saveTaskEdit(taskId, editedName) {
+    if (readOnlyMode || editingTaskId !== taskId) {
+        return;
+    }
+
+    const taskName = editedName.trim();
+
+    if (taskName === "") {
+        alert("Tên công việc không được để trống.");
+        return;
+    }
+
+    tasks = tasks.map(function(task) {
+        if (task.id !== taskId) {
+            return task;
+        }
+
+        return Object.assign({}, task, {
+            name: taskName,
+            updatedAt: createUpdatedTimestamp(task)
+        });
+    });
+
+    editingTaskId = null;
+    saveTasks();
+    renderTasks();
+}
+
 /*function addTask() {
     const task = {
         id: Date.now(),
@@ -644,7 +762,7 @@ function addTask() {
 }
 
 function toggleTask(taskId) {
-    if (readOnlyMode) {
+    if (readOnlyMode || editingTaskId === taskId) {
         return;
     }
 
@@ -664,7 +782,7 @@ function toggleTask(taskId) {
 }
 
 function deleteTask(taskId) {
-    if (readOnlyMode) {
+    if (readOnlyMode || editingTaskId === taskId) {
         return;
     }
 
@@ -678,8 +796,16 @@ function deleteTask(taskId) {
 
 function renderTasks() {
     taskList.innerHTML = "";
+    const visibleTasks = getVisibleTasks();
+    taskList.className = visibleTasks.length === 0 ? "task-list-empty" : "";
 
-    tasks.forEach(function(task) {
+    if (editingTaskId !== null && !visibleTasks.some(function(task) {
+        return task.id === editingTaskId;
+    })) {
+        editingTaskId = null;
+    }
+
+    visibleTasks.forEach(function(task) {
         const taskItem = document.createElement("li");
         taskItem.className = "task-item";
 
@@ -687,16 +813,57 @@ function renderTasks() {
             taskItem.classList.add("completed");
         }
 
-        const taskContent = document.createElement("label");
+        const taskContent = document.createElement("div");
         taskContent.className = "task-content";
 
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.checked = task.completed;
-        checkbox.disabled = readOnlyMode;
+        checkbox.disabled = readOnlyMode || editingTaskId === task.id;
         checkbox.addEventListener("change", function() {
             toggleTask(task.id);
         });
+
+        taskContent.appendChild(checkbox);
+
+        if (editingTaskId === task.id) {
+            const editInput = document.createElement("input");
+            editInput.type = "text";
+            editInput.className = "edit-task-input";
+            editInput.value = task.name;
+            editInput.disabled = readOnlyMode;
+            editInput.addEventListener("keydown", function(event) {
+                if (event.key === "Enter") {
+                    saveTaskEdit(task.id, editInput.value);
+                } else if (event.key === "Escape") {
+                    cancelTaskEdit(task.id);
+                }
+            });
+
+            const saveButton = document.createElement("button");
+            saveButton.type = "button";
+            saveButton.className = "save-button";
+            saveButton.textContent = "Lưu";
+            saveButton.disabled = readOnlyMode;
+            saveButton.addEventListener("click", function() {
+                saveTaskEdit(task.id, editInput.value);
+            });
+
+            const cancelButton = document.createElement("button");
+            cancelButton.type = "button";
+            cancelButton.className = "cancel-button";
+            cancelButton.textContent = "Hủy";
+            cancelButton.addEventListener("click", function() {
+                cancelTaskEdit(task.id);
+            });
+
+            taskContent.appendChild(editInput);
+            taskItem.appendChild(taskContent);
+            taskItem.appendChild(saveButton);
+            taskItem.appendChild(cancelButton);
+            taskList.appendChild(taskItem);
+            return;
+        }
 
         const taskName = document.createElement("span");
         taskName.className = "task-name";
@@ -711,13 +878,25 @@ function renderTasks() {
             deleteTask(task.id);
         });
 
-        taskContent.appendChild(checkbox);
         taskContent.appendChild(taskName);
         taskItem.appendChild(taskContent);
         taskItem.appendChild(deleteButton);
+
+        const editButton = document.createElement("button");
+        editButton.type = "button";
+        editButton.className = "edit-button";
+        editButton.textContent = "Sửa";
+        editButton.disabled = readOnlyMode;
+        editButton.addEventListener("click", function() {
+            startEditingTask(task.id);
+        });
+
+        taskItem.appendChild(editButton);
         taskList.appendChild(taskItem);
     });
 
+    noResultsMessage.textContent = "Không tìm thấy công việc phù hợp.";
+    noResultsMessage.hidden = visibleTasks.length !== 0;
     renderStats();
 }
 
@@ -731,6 +910,21 @@ function renderStats() {
 }
 
 addTaskButton.addEventListener("click", addTask);
+
+searchInput.addEventListener("input", function() {
+    searchQuery = normalizeSearchValue(searchInput.value);
+    renderTasks();
+});
+
+filterSelect.addEventListener("change", function() {
+    selectedFilter = filterSelect.value;
+    renderTasks();
+});
+
+sortSelect.addEventListener("change", function() {
+    selectedSort = sortSelect.value;
+    renderTasks();
+});
 
 exportBackupButton.addEventListener("click", exportBackup);
 

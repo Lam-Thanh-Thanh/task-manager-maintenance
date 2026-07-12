@@ -104,6 +104,10 @@ function createTestContext(options = {}) {
         taskList: createElement("ul"),
         totalTasks: createElement("span"),
         completedTasks: createElement("span"),
+        searchInput: createElement("input"),
+        filterSelect: createElement("select"),
+        sortSelect: createElement("select"),
+        noResultsMessage: createElement("p"),
         storageWarning: createElement("section"),
         storageWarningMessage: createElement("p"),
         closeStorageWarningButton: createElement("button"),
@@ -116,6 +120,9 @@ function createTestContext(options = {}) {
 
     elements.storageWarning.className = "storage-warning";
     elements.storageWarning.hidden = true;
+    elements.filterSelect.value = "all";
+    elements.sortSelect.value = "newest";
+    elements.noResultsMessage.hidden = true;
     elements.restoreFileInput.hidden = true;
     elements.backupRestoreStatus.hidden = true;
     elements.restoreReadOnlyHint.hidden = true;
@@ -1076,6 +1083,305 @@ test("RQ-004 che do chi doc cho export nhung chan restore", async function() {
     assert.strictEqual(getRestoreBackupKeys(result.storage).length, 0);
     assert.strictEqual(result.confirmMessages.length, 0);
     assert.ok(result.elements.backupRestoreStatus.textContent.includes("Chế độ chỉ đọc"));
+});
+
+function createAdvancedTasks() {
+    return [
+        createVersion2Task({
+            id: "alpha",
+            name: "Alpha",
+            completed: false,
+            createdAt: "2023-11-14T10:00:00.000Z",
+            updatedAt: "2023-11-14T10:00:00.000Z"
+        }),
+        createVersion2Task({
+            id: "bravo",
+            name: "bravo",
+            completed: true,
+            createdAt: "2023-11-14T12:00:00.000Z",
+            updatedAt: "2023-11-14T12:00:00.000Z"
+        }),
+        createVersion2Task({
+            id: "charlie",
+            name: "Charlie",
+            completed: false,
+            createdAt: "2023-11-14T11:00:00.000Z",
+            updatedAt: "2023-11-14T11:00:00.000Z"
+        })
+    ];
+}
+
+function getRenderedTaskNames(elements) {
+    return elements.taskList.children.map(function(taskItem) {
+        const nameElement = taskItem.children[0].children[1];
+        return nameElement.tagName === "INPUT"
+            ? nameElement.value
+            : nameElement.textContent;
+    });
+}
+
+function findRenderedTaskItem(elements, taskName) {
+    return elements.taskList.children.find(function(taskItem) {
+        const nameElement = taskItem.children[0].children[1];
+        const renderedName = nameElement.tagName === "INPUT"
+            ? nameElement.value
+            : nameElement.textContent;
+        return renderedName === taskName;
+    });
+}
+
+test("RQ-003 mo sua va luu ten task", function() {
+    const task = createVersion2Task({ id: "edit-1", name: "Ten cu" });
+    const result = createContextWithPayload(createVersion2Payload([task]), {
+        now: 1700001000000
+    });
+
+    result.elements.taskList.children[0].children[2].events.click();
+    const editInput = result.elements.taskList.children[0].children[0].children[1];
+    assert.strictEqual(editInput.className, "edit-task-input");
+    assert.strictEqual(editInput.value, "Ten cu");
+
+    editInput.value = "  Ten moi  ";
+    result.elements.taskList.children[0].children[1].events.click();
+
+    assert.strictEqual(parseMainStorage(result.storage).tasks[0].name, "Ten moi");
+    assert.deepStrictEqual(getRenderedTaskNames(result.elements), ["Ten moi"]);
+});
+
+test("RQ-003 huy sua khong thay doi du lieu", function() {
+    const payload = createVersion2Payload([
+        createVersion2Task({ id: "edit-cancel", name: "Giu nguyen" })
+    ]);
+    const result = createContextWithPayload(payload);
+
+    result.elements.taskList.children[0].children[2].events.click();
+    result.elements.taskList.children[0].children[0].children[1].value = "Khong luu";
+    result.elements.taskList.children[0].children[2].events.click();
+
+    assert.strictEqual(result.storage[STORAGE_KEY], payload);
+    assert.deepStrictEqual(getRenderedTaskNames(result.elements), ["Giu nguyen"]);
+});
+
+test("RQ-003 tu choi ten sua rong", function() {
+    const payload = createVersion2Payload([
+        createVersion2Task({ id: "edit-empty", name: "Hop le" })
+    ]);
+    const result = createContextWithPayload(payload);
+
+    result.elements.taskList.children[0].children[2].events.click();
+    const editInput = result.elements.taskList.children[0].children[0].children[1];
+    editInput.value = "   ";
+    result.elements.taskList.children[0].children[1].events.click();
+
+    assert.strictEqual(result.storage[STORAGE_KEY], payload);
+    assert.strictEqual(result.alerts.length, 1);
+    assert.strictEqual(
+        result.elements.taskList.children[0].children[0].children[1].className,
+        "edit-task-input"
+    );
+});
+
+test("RQ-003 sua giu createdAt metadata va cap nhat updatedAt", function() {
+    const originalTask = createVersion2Task({
+        id: "metadata",
+        name: "Metadata cu",
+        note: "giu-lai"
+    });
+    const result = createContextWithPayload(createVersion2Payload([originalTask]), {
+        now: 1700001000000
+    });
+
+    result.elements.taskList.children[0].children[2].events.click();
+    result.elements.taskList.children[0].children[0].children[1].value = "Metadata moi";
+    result.elements.taskList.children[0].children[1].events.click();
+
+    const editedTask = parseMainStorage(result.storage).tasks[0];
+    assert.strictEqual(editedTask.createdAt, originalTask.createdAt);
+    assert.strictEqual(editedTask.note, "giu-lai");
+    assert.ok(Date.parse(editedTask.updatedAt) > Date.parse(originalTask.updatedAt));
+});
+
+test("RQ-003 chi sua mot task va thoat an toan khi bi an", function() {
+    const result = createContextWithPayload(createVersion2Payload(createAdvancedTasks()));
+
+    findRenderedTaskItem(result.elements, "Alpha").children[2].events.click();
+    findRenderedTaskItem(result.elements, "bravo").children[2].events.click();
+
+    const editInputs = result.elements.taskList.children.filter(function(taskItem) {
+        return taskItem.children[0].children[1].className === "edit-task-input";
+    });
+    assert.strictEqual(editInputs.length, 1);
+    assert.strictEqual(editInputs[0].children[0].children[1].value, "bravo");
+
+    result.elements.searchInput.value = "Alpha";
+    result.elements.searchInput.events.input();
+    result.elements.searchInput.value = "";
+    result.elements.searchInput.events.input();
+
+    assert.strictEqual(
+        result.elements.taskList.children.some(function(taskItem) {
+            return taskItem.children[0].children[1].className === "edit-task-input";
+        }),
+        false
+    );
+});
+
+test("RQ-003 search khong phan biet hoa thuong va tu khoa rong", function() {
+    const result = createContextWithPayload(createVersion2Payload(createAdvancedTasks()));
+
+    result.elements.searchInput.value = "BRAVO";
+    result.elements.searchInput.events.input();
+    assert.deepStrictEqual(getRenderedTaskNames(result.elements), ["bravo"]);
+
+    result.elements.searchInput.value = "   ";
+    result.elements.searchInput.events.input();
+    assert.deepStrictEqual(getRenderedTaskNames(result.elements), [
+        "bravo",
+        "Charlie",
+        "Alpha"
+    ]);
+});
+
+test("RQ-003 ba bo loc hoat dong", function() {
+    const result = createContextWithPayload(createVersion2Payload(createAdvancedTasks()));
+
+    result.elements.filterSelect.value = "pending";
+    result.elements.filterSelect.events.change();
+    assert.deepStrictEqual(getRenderedTaskNames(result.elements), ["Charlie", "Alpha"]);
+
+    result.elements.filterSelect.value = "completed";
+    result.elements.filterSelect.events.change();
+    assert.deepStrictEqual(getRenderedTaskNames(result.elements), ["bravo"]);
+
+    result.elements.filterSelect.value = "all";
+    result.elements.filterSelect.events.change();
+    assert.strictEqual(result.elements.taskList.children.length, 3);
+});
+
+test("RQ-003 bon kieu sap xep hoat dong", function() {
+    const result = createContextWithPayload(createVersion2Payload(createAdvancedTasks()));
+    const expectations = {
+        newest: ["bravo", "Charlie", "Alpha"],
+        oldest: ["Alpha", "Charlie", "bravo"],
+        "name-asc": ["Alpha", "bravo", "Charlie"],
+        "name-desc": ["Charlie", "bravo", "Alpha"]
+    };
+
+    Object.keys(expectations).forEach(function(sortValue) {
+        result.elements.sortSelect.value = sortValue;
+        result.elements.sortSelect.events.change();
+        assert.deepStrictEqual(
+            getRenderedTaskNames(result.elements),
+            expectations[sortValue]
+        );
+    });
+});
+
+test("RQ-003 ket hop search filter sort", function() {
+    const result = createContextWithPayload(createVersion2Payload(createAdvancedTasks()));
+
+    result.elements.searchInput.value = "a";
+    result.elements.searchInput.events.input();
+    result.elements.filterSelect.value = "pending";
+    result.elements.filterSelect.events.change();
+    result.elements.sortSelect.value = "name-desc";
+    result.elements.sortSelect.events.change();
+
+    assert.deepStrictEqual(getRenderedTaskNames(result.elements), ["Charlie", "Alpha"]);
+});
+
+test("RQ-003 thay doi view khong doi storage hoac thu tu goc", async function() {
+    const originalTasks = createAdvancedTasks();
+    const payload = createVersion2Payload(originalTasks);
+    const result = createContextWithPayload(payload);
+    const mutationsBefore = result.storageOperations.filter(function(operation) {
+        return operation.type === "set" || operation.type === "remove";
+    }).length;
+
+    result.elements.searchInput.value = "a";
+    result.elements.searchInput.events.input();
+    result.elements.filterSelect.value = "pending";
+    result.elements.filterSelect.events.change();
+    result.elements.sortSelect.value = "name-desc";
+    result.elements.sortSelect.events.change();
+
+    assert.strictEqual(result.storage[STORAGE_KEY], payload);
+    assert.strictEqual(result.storageOperations.filter(function(operation) {
+        return operation.type === "set" || operation.type === "remove";
+    }).length, mutationsBefore);
+
+    result.elements.exportBackupButton.events.click();
+    const exportedBackup = JSON.parse(await result.createdBlobs[0].text());
+    assert.deepStrictEqual(exportedBackup.data.tasks.map(function(task) {
+        return task.id;
+    }), originalTasks.map(function(task) {
+        return task.id;
+    }));
+});
+
+test("RQ-003 thong ke dua tren toan bo tasks", function() {
+    const result = createContextWithPayload(createVersion2Payload(createAdvancedTasks()));
+
+    result.elements.filterSelect.value = "completed";
+    result.elements.filterSelect.events.change();
+
+    assert.strictEqual(result.elements.taskList.children.length, 1);
+    assert.strictEqual(result.elements.totalTasks.textContent, 3);
+    assert.strictEqual(result.elements.completedTasks.textContent, 1);
+});
+
+test("RQ-003 hien thong bao khi khong co ket qua", function() {
+    const result = createContextWithPayload(createVersion2Payload(createAdvancedTasks()));
+
+    result.elements.searchInput.value = "khong-ton-tai";
+    result.elements.searchInput.events.input();
+
+    assert.strictEqual(result.elements.taskList.children.length, 0);
+    assert.strictEqual(result.elements.noResultsMessage.hidden, false);
+    assert.ok(result.elements.noResultsMessage.textContent.includes("Không tìm thấy"));
+});
+
+test("RQ-003 read-only cho xem nhung chan sua du lieu", function() {
+    const futureTasks = createAdvancedTasks();
+    const futurePayload = JSON.stringify({ version: 3, tasks: futureTasks });
+    const result = createContextWithPayload(futurePayload);
+
+    assert.strictEqual(result.elements.searchInput.disabled, false);
+    assert.strictEqual(result.elements.filterSelect.disabled, false);
+    assert.strictEqual(result.elements.sortSelect.disabled, false);
+
+    result.elements.searchInput.value = "Alpha";
+    result.elements.searchInput.events.input();
+    assert.deepStrictEqual(getRenderedTaskNames(result.elements), ["Alpha"]);
+
+    const taskItem = result.elements.taskList.children[0];
+    const checkbox = taskItem.children[0].children[0];
+    const deleteButton = taskItem.children[1];
+    const editButton = taskItem.children[2];
+    assert.strictEqual(checkbox.disabled, true);
+    assert.strictEqual(deleteButton.disabled, true);
+    assert.strictEqual(editButton.disabled, true);
+
+    checkbox.events.change();
+    deleteButton.events.click();
+    editButton.events.click();
+    assert.strictEqual(result.storage[STORAGE_KEY], futurePayload);
+    assert.deepStrictEqual(getRenderedTaskNames(result.elements), ["Alpha"]);
+    assert.strictEqual(result.elements.taskList.children[0].children.length, 3);
+});
+
+test("RQ-003 export backup chua ten sau khi sua", async function() {
+    const result = createContextWithPayload(createVersion2Payload([
+        createVersion2Task({ id: "export-edited", name: "Truoc khi sua" })
+    ]), { now: 1700001000000 });
+
+    result.elements.taskList.children[0].children[2].events.click();
+    result.elements.taskList.children[0].children[0].children[1].value = "Sau khi sua";
+    result.elements.taskList.children[0].children[1].events.click();
+    result.elements.exportBackupButton.events.click();
+
+    const exportedBackup = JSON.parse(await result.createdBlobs[0].text());
+    assert.strictEqual(exportedBackup.data.tasks[0].name, "Sau khi sua");
 });
 
 runTests().catch(function(error) {
