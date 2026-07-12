@@ -28,6 +28,30 @@
             <ul id="taskList"></ul>
         </section>
 
+        <section class="backup-restore-section" aria-labelledby="backupRestoreTitle">
+            <h2 id="backupRestoreTitle">Sao lưu và khôi phục dữ liệu</h2>
+            <div class="backup-restore-actions">
+                <button id="exportBackupButton" type="button">Xuất bản sao lưu</button>
+                <button id="restoreBackupButton" type="button">Khôi phục từ file</button>
+                <input
+                    id="restoreFileInput"
+                    type="file"
+                    accept=".json,application/json"
+                    hidden
+                >
+            </div>
+            <p id="restoreReadOnlyHint" class="restore-read-only-hint" hidden>
+                Chế độ chỉ đọc: Bạn vẫn có thể xuất bản sao lưu nhưng không thể khôi phục dữ liệu.
+            </p>
+            <p
+                id="backupRestoreStatus"
+                class="backup-restore-status"
+                role="status"
+                aria-live="polite"
+                hidden
+            ></p>
+        </section>
+
         <section class="task-stats" aria-label="Thống kê công việc">
             <p>Tổng số công việc: <span id="totalTasks">0</span></p>
             <p>Đã hoàn thành: <span id="completedTasks">0</span></p>

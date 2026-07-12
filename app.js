@@ -1,7 +1,10 @@
 const STORAGE_KEY = "taskManagerTasks";
 const CORRUPTED_STORAGE_PREFIX = STORAGE_KEY + "_corrupted_";
 const MIGRATION_BACKUP_PREFIX = STORAGE_KEY + "_migration_backup_";
+const RESTORE_BACKUP_PREFIX = STORAGE_KEY + "_restore_backup_";
 const STORAGE_VERSION = 2;
+const BACKUP_FORMAT_VERSION = 1;
+const MAX_RESTORE_FILE_SIZE = 1024 * 1024;
 
 const taskInput = document.getElementById("taskInput");
 const addTaskButton = document.getElementById("addTaskButton");
@@ -11,6 +14,11 @@ const completedTasks = document.getElementById("completedTasks");
 const storageWarning = document.getElementById("storageWarning");
 const storageWarningMessage = document.getElementById("storageWarningMessage");
 const closeStorageWarningButton = document.getElementById("closeStorageWarningButton");
+const exportBackupButton = document.getElementById("exportBackupButton");
+const restoreBackupButton = document.getElementById("restoreBackupButton");
+const restoreFileInput = document.getElementById("restoreFileInput");
+const backupRestoreStatus = document.getElementById("backupRestoreStatus");
+const restoreReadOnlyHint = document.getElementById("restoreReadOnlyHint");
 
 let storageWritesEnabled = true;
 let readOnlyMode = false;
@@ -244,6 +252,11 @@ function enableReadOnlyMode() {
     storageWritesEnabled = false;
     taskInput.disabled = true;
     addTaskButton.disabled = true;
+    restoreBackupButton.disabled = true;
+    restoreFileInput.disabled = true;
+    restoreReadOnlyHint.textContent =
+        "Chế độ chỉ đọc: Bạn vẫn có thể xuất bản sao lưu nhưng không thể khôi phục dữ liệu.";
+    restoreReadOnlyHint.hidden = false;
     closeStorageWarningButton.hidden = true;
 }
 
@@ -320,6 +333,258 @@ function saveTasks() {
         version: STORAGE_VERSION,
         tasks
     }));
+}
+
+function showBackupRestoreStatus(message, statusType) {
+    backupRestoreStatus.textContent = message;
+    backupRestoreStatus.className =
+        "backup-restore-status backup-restore-status-" + statusType;
+    backupRestoreStatus.hidden = false;
+}
+
+function createVersion2Snapshot() {
+    const snapshot = {
+        version: STORAGE_VERSION,
+        tasks: tasks.map(function(task) {
+            return Object.assign({}, task);
+        })
+    };
+
+    return isValidVersion2Storage(snapshot) ? snapshot : null;
+}
+
+function createBackupFileName(exportedAt) {
+    const datePart = exportedAt.slice(0, 10);
+    const timePart = exportedAt.slice(11, 19).replace(/:/g, "");
+    return "task-manager-backup-" + datePart + "-" + timePart + ".json";
+}
+
+function exportBackup() {
+    const dataSnapshot = createVersion2Snapshot();
+
+    if (dataSnapshot === null) {
+        showBackupRestoreStatus(
+            "Không thể tạo bản sao lưu vì dữ liệu hiện tại không tương thích với định dạng sao lưu.",
+            "error"
+        );
+        return;
+    }
+
+    const exportedAt = createCurrentTimestamp();
+    const backupData = {
+        backupFormatVersion: BACKUP_FORMAT_VERSION,
+        exportedAt,
+        data: dataSnapshot
+    };
+    const fileName = createBackupFileName(exportedAt);
+    const blob = new Blob([
+        JSON.stringify(backupData, null, 2)
+    ], { type: "application/json" });
+    let objectUrl;
+    let downloadLink;
+
+    try {
+        objectUrl = URL.createObjectURL(blob);
+        downloadLink = document.createElement("a");
+        downloadLink.href = objectUrl;
+        downloadLink.download = fileName;
+        downloadLink.hidden = true;
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        showBackupRestoreStatus(
+            "Đã xuất bản sao lưu " + fileName + ".",
+            "success"
+        );
+    } catch (error) {
+        showBackupRestoreStatus(
+            "Không thể xuất bản sao lưu. Vui lòng thử lại.",
+            "error"
+        );
+    } finally {
+        if (downloadLink) {
+            try {
+                document.body.removeChild(downloadLink);
+            } catch (error) {
+                // Liên kết đã được trình duyệt loại bỏ.
+            }
+        }
+
+        if (objectUrl) {
+            URL.revokeObjectURL(objectUrl);
+        }
+    }
+}
+
+function isJsonRestoreFile(file) {
+    const fileName = typeof file.name === "string" ? file.name.toLowerCase() : "";
+    const fileType = typeof file.type === "string" ? file.type.toLowerCase() : "";
+
+    return fileName.endsWith(".json") &&
+        (fileType === "" || fileType === "application/json" || fileType === "text/json");
+}
+
+function parseBackupContent(fileContent) {
+    let backupData;
+
+    try {
+        backupData = JSON.parse(fileContent);
+    } catch (error) {
+        return { success: false, message: "File không chứa JSON hợp lệ." };
+    }
+
+    if (typeof backupData !== "object" ||
+        backupData === null ||
+        Array.isArray(backupData) ||
+        backupData.backupFormatVersion !== BACKUP_FORMAT_VERSION) {
+        return { success: false, message: "Phiên bản định dạng sao lưu không được hỗ trợ." };
+    }
+
+    if (!isValidIsoDateTime(backupData.exportedAt)) {
+        return { success: false, message: "Thời gian xuất trong file sao lưu không hợp lệ." };
+    }
+
+    if (!isValidVersion2Storage(backupData.data)) {
+        return { success: false, message: "Dữ liệu công việc trong file sao lưu không hợp lệ." };
+    }
+
+    return { success: true, backupData };
+}
+
+function createRestoreSafetyBackup(currentStorageValue) {
+    try {
+        const backupKey = createUniqueStorageKey(RESTORE_BACKUP_PREFIX);
+        localStorage.setItem(backupKey, currentStorageValue);
+
+        if (localStorage.getItem(backupKey) !== currentStorageValue) {
+            throw new Error("Khong the xac minh ban sao restore");
+        }
+
+        return { success: true, backupKey };
+    } catch (error) {
+        return { success: false };
+    }
+}
+
+function restoreVersion2Data(version2Data) {
+    let currentStorageValue;
+
+    try {
+        currentStorageValue = localStorage.getItem(STORAGE_KEY);
+    } catch (error) {
+        showBackupRestoreStatus(
+            "Không thể đọc dữ liệu hiện tại nên quá trình khôi phục đã dừng.",
+            "error"
+        );
+        return false;
+    }
+
+    const hadStoredData = currentStorageValue !== null;
+    const currentSnapshot = currentStorageValue === null
+        ? JSON.stringify(createVersion2Snapshot())
+        : currentStorageValue;
+    const safetyBackup = createRestoreSafetyBackup(currentSnapshot);
+
+    if (!safetyBackup.success) {
+        showBackupRestoreStatus(
+            "Không thể tạo bản sao an toàn của dữ liệu hiện tại. Dữ liệu chưa bị thay đổi.",
+            "error"
+        );
+        return false;
+    }
+
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(version2Data));
+    } catch (error) {
+        try {
+            if (hadStoredData) {
+                localStorage.setItem(STORAGE_KEY, currentStorageValue);
+            } else {
+                localStorage.removeItem(STORAGE_KEY);
+            }
+        } catch (rollbackError) {
+            // localStorage.setItem là thao tác nguyên tử trong trình duyệt.
+        }
+
+        showBackupRestoreStatus(
+            "Không thể ghi dữ liệu khôi phục. Dữ liệu hiện tại vẫn được giữ nguyên.",
+            "error"
+        );
+        return false;
+    }
+
+    storageWritesEnabled = true;
+    tasks = version2Data.tasks.map(function(task) {
+        return Object.assign({}, task);
+    });
+    renderTasks();
+    showBackupRestoreStatus(
+        "Khôi phục thành công " + tasks.length + " công việc.",
+        "success"
+    );
+    return true;
+}
+
+async function handleRestoreFile(file) {
+    if (readOnlyMode) {
+        showBackupRestoreStatus(
+            "Chế độ chỉ đọc: Có thể xuất bản sao lưu nhưng không thể khôi phục dữ liệu.",
+            "error"
+        );
+        return;
+    }
+
+    if (!isJsonRestoreFile(file)) {
+        showBackupRestoreStatus("Chỉ chấp nhận file JSON.", "error");
+        return;
+    }
+
+    if (typeof file.size !== "number" || file.size <= 0) {
+        showBackupRestoreStatus("File sao lưu đang rỗng.", "error");
+        return;
+    }
+
+    if (file.size > MAX_RESTORE_FILE_SIZE) {
+        showBackupRestoreStatus("File sao lưu vượt quá giới hạn 1 MB.", "error");
+        return;
+    }
+
+    let fileContent;
+
+    try {
+        fileContent = await file.text();
+    } catch (error) {
+        showBackupRestoreStatus("Không thể đọc file sao lưu.", "error");
+        return;
+    }
+
+    if (fileContent.trim() === "") {
+        showBackupRestoreStatus("File sao lưu đang rỗng.", "error");
+        return;
+    }
+
+    const parseResult = parseBackupContent(fileContent);
+
+    if (!parseResult.success) {
+        showBackupRestoreStatus(parseResult.message, "error");
+        return;
+    }
+
+    const backupData = parseResult.backupData;
+    const confirmationMessage =
+        "Khôi phục từ file: " + file.name + "\n" +
+        "Thời gian xuất: " + backupData.exportedAt + "\n" +
+        "Số công việc: " + backupData.data.tasks.length + "\n\n" +
+        "Dữ liệu hiện tại sẽ được thay thế. Bạn có muốn tiếp tục?";
+
+    if (!confirm(confirmationMessage)) {
+        showBackupRestoreStatus(
+            "Đã hủy khôi phục từ file " + file.name + ".",
+            "info"
+        );
+        return;
+    }
+
+    restoreVersion2Data(backupData.data);
 }
 
 function createCurrentTimestamp() {
@@ -466,6 +731,30 @@ function renderStats() {
 }
 
 addTaskButton.addEventListener("click", addTask);
+
+exportBackupButton.addEventListener("click", exportBackup);
+
+restoreBackupButton.addEventListener("click", function() {
+    if (readOnlyMode) {
+        return;
+    }
+
+    restoreFileInput.click();
+});
+
+restoreFileInput.addEventListener("change", async function(event) {
+    const file = event.target.files && event.target.files[0];
+
+    if (!file) {
+        return;
+    }
+
+    try {
+        await handleRestoreFile(file);
+    } finally {
+        event.target.value = "";
+    }
+});
 
 closeStorageWarningButton.addEventListener("click", function() {
     if (readOnlyMode) {

@@ -5,7 +5,10 @@ const vm = require("vm");
 const STORAGE_KEY = "taskManagerTasks";
 const CORRUPTED_STORAGE_PREFIX = STORAGE_KEY + "_corrupted_";
 const MIGRATION_BACKUP_PREFIX = STORAGE_KEY + "_migration_backup_";
+const RESTORE_BACKUP_PREFIX = STORAGE_KEY + "_restore_backup_";
 const STORAGE_VERSION = 2;
+const BACKUP_FORMAT_VERSION = 1;
+const MAX_RESTORE_FILE_SIZE = 1024 * 1024;
 const DEFAULT_NOW = 1700000100000;
 const appSource = fs.readFileSync("app.js", "utf8");
 
@@ -18,8 +21,12 @@ function createElement(tagName) {
         type: "",
         checked: false,
         value: "",
+        files: [],
         disabled: false,
         hidden: false,
+        href: "",
+        download: "",
+        clicked: false,
         events: {},
         classList: {
             values: [],
@@ -33,6 +40,13 @@ function createElement(tagName) {
         },
         addEventListener(type, handler) {
             this.events[type] = handler;
+        },
+        click() {
+            this.clicked = true;
+
+            if (this.events.click) {
+                return this.events.click();
+            }
         },
         focus() {}
     };
@@ -92,22 +106,72 @@ function createTestContext(options = {}) {
         completedTasks: createElement("span"),
         storageWarning: createElement("section"),
         storageWarningMessage: createElement("p"),
-        closeStorageWarningButton: createElement("button")
+        closeStorageWarningButton: createElement("button"),
+        exportBackupButton: createElement("button"),
+        restoreBackupButton: createElement("button"),
+        restoreFileInput: createElement("input"),
+        backupRestoreStatus: createElement("p"),
+        restoreReadOnlyHint: createElement("p")
     };
 
     elements.storageWarning.className = "storage-warning";
     elements.storageWarning.hidden = true;
+    elements.restoreFileInput.hidden = true;
+    elements.backupRestoreStatus.hidden = true;
+    elements.restoreReadOnlyHint.hidden = true;
 
     const storage = Object.assign({}, options.initialStorage);
     const alerts = [];
     const storageOperations = [];
+    const createdElements = [];
+    const bodyChildren = [];
+    const createdBlobs = [];
+    const createdUrls = [];
+    const revokedUrls = [];
+    const confirmMessages = [];
+    let restoreWriteFailed = false;
+
+    function MockBlob(parts, blobOptions = {}) {
+        this.parts = parts;
+        this.type = blobOptions.type || "";
+        this.size = parts.reduce(function(total, part) {
+            return total + String(part).length;
+        }, 0);
+        createdBlobs.push(this);
+    }
+
+    MockBlob.prototype.text = function() {
+        return Promise.resolve(this.parts.map(String).join(""));
+    };
 
     const context = {
         document: {
             getElementById(id) {
                 return elements[id];
             },
-            createElement
+            createElement(tagName) {
+                const element = createElement(tagName);
+                createdElements.push(element);
+                return element;
+            },
+            body: {
+                appendChild(element) {
+                    bodyChildren.push(element);
+                    element.parentNode = this;
+                    return element;
+                },
+                removeChild(element) {
+                    const index = bodyChildren.indexOf(element);
+
+                    if (index === -1) {
+                        throw new Error("Element khong nam trong body");
+                    }
+
+                    bodyChildren.splice(index, 1);
+                    element.parentNode = null;
+                    return element;
+                }
+            }
         },
         localStorage: {
             getItem(key) {
@@ -135,6 +199,18 @@ function createTestContext(options = {}) {
                     throw new Error("Khong the tao ban sao migration");
                 }
 
+                if (options.failRestoreBackupWrite &&
+                    key.startsWith(RESTORE_BACKUP_PREFIX)) {
+                    throw new Error("Khong the tao ban sao restore");
+                }
+
+                if (options.failRestoreDataWrite &&
+                    key === STORAGE_KEY &&
+                    !restoreWriteFailed) {
+                    restoreWriteFailed = true;
+                    throw new Error("Khong the ghi du lieu restore");
+                }
+
                 if (options.failVersion2Write &&
                     key === STORAGE_KEY &&
                     stringValue.includes('"version":2')) {
@@ -153,16 +229,47 @@ function createTestContext(options = {}) {
                 delete storage[key];
             }
         },
+        Blob: MockBlob,
+        URL: {
+            createObjectURL(blob) {
+                const url = "blob:test-" + (createdUrls.length + 1);
+                createdUrls.push({ url, blob });
+                return url;
+            },
+            revokeObjectURL(url) {
+                revokedUrls.push(url);
+            }
+        },
         Date: createMockDate(options),
         alert(message) {
             alerts.push(message);
+        },
+        confirm(message) {
+            confirmMessages.push(message);
+
+            if (Array.isArray(options.confirmResults)) {
+                return options.confirmResults.shift();
+            }
+
+            return options.confirmResult === undefined ? true : options.confirmResult;
         }
     };
 
     vm.createContext(context);
     vm.runInContext(appSource, context);
 
-    return { elements, storage, alerts, storageOperations };
+    return {
+        elements,
+        storage,
+        alerts,
+        storageOperations,
+        createdElements,
+        bodyChildren,
+        createdBlobs,
+        createdUrls,
+        revokedUrls,
+        confirmMessages
+    };
 }
 
 function createContextWithPayload(payload, options = {}) {
@@ -187,6 +294,10 @@ function getMigrationBackupKeys(storage) {
     return getKeysWithPrefix(storage, MIGRATION_BACKUP_PREFIX);
 }
 
+function getRestoreBackupKeys(storage) {
+    return getKeysWithPrefix(storage, RESTORE_BACKUP_PREFIX);
+}
+
 function parseMainStorage(storage) {
     return JSON.parse(storage[STORAGE_KEY]);
 }
@@ -205,6 +316,28 @@ function createVersion2Payload(tasks) {
     return JSON.stringify({ version: STORAGE_VERSION, tasks });
 }
 
+function createBackupFileContent(tasks, overrides = {}) {
+    return JSON.stringify(Object.assign({
+        backupFormatVersion: BACKUP_FORMAT_VERSION,
+        exportedAt: "2023-11-14T22:13:20.000Z",
+        data: {
+            version: STORAGE_VERSION,
+            tasks
+        }
+    }, overrides));
+}
+
+function createRestoreFile(content, overrides = {}) {
+    return Object.assign({
+        name: "task-manager-backup.json",
+        type: "application/json",
+        size: Buffer.byteLength(content, "utf8"),
+        text() {
+            return Promise.resolve(content);
+        }
+    }, overrides);
+}
+
 function assertInvalidPayloadIsQuarantined(payload) {
     const result = createContextWithPayload(payload);
     const backupKeys = getCorruptedBackupKeys(result.storage);
@@ -221,12 +354,19 @@ function assertInvalidPayloadIsQuarantined(payload) {
     return result;
 }
 
-let testCount = 0;
+const testCases = [];
 
 function test(name, callback) {
-    callback();
-    testCount += 1;
-    console.log("[OK] " + name);
+    testCases.push({ name, callback });
+}
+
+async function runTests() {
+    for (const testCase of testCases) {
+        await testCase.callback();
+        console.log("[OK] " + testCase.name);
+    }
+
+    console.log(testCases.length + " test cases passed.");
 }
 
 test("Khong co du lieu thi khoi dong voi danh sach rong", function() {
@@ -661,4 +801,284 @@ test("Hoi quy them toggle xoa ten rong va thong ke", function() {
     assert.strictEqual(alerts.length, 1);
 });
 
-console.log(testCount + " test cases passed.");
+async function selectRestoreFile(result, file) {
+    result.elements.restoreFileInput.files = [file];
+    await result.elements.restoreFileInput.events.change({
+        target: result.elements.restoreFileInput
+    });
+}
+
+test("RQ-004 export dung cau truc va khong thay doi du lieu", async function() {
+    const currentTask = createVersion2Task();
+    const payload = createVersion2Payload([currentTask]);
+    const result = createContextWithPayload(payload);
+    const mutationsBefore = result.storageOperations.filter(function(operation) {
+        return operation.type === "set" || operation.type === "remove";
+    }).length;
+
+    result.elements.exportBackupButton.events.click();
+
+    assert.strictEqual(result.storage[STORAGE_KEY], payload);
+    assert.strictEqual(result.storageOperations.filter(function(operation) {
+        return operation.type === "set" || operation.type === "remove";
+    }).length, mutationsBefore);
+    assert.strictEqual(result.createdBlobs.length, 1);
+    assert.strictEqual(result.createdBlobs[0].type, "application/json");
+
+    const backupData = JSON.parse(await result.createdBlobs[0].text());
+    assert.strictEqual(backupData.backupFormatVersion, BACKUP_FORMAT_VERSION);
+    assert.strictEqual(backupData.exportedAt, "2023-11-14T22:15:00.000Z");
+    assert.deepStrictEqual(backupData.data, {
+        version: STORAGE_VERSION,
+        tasks: [currentTask]
+    });
+});
+
+test("RQ-004 ten file export va object URL hop le", function() {
+    const result = createContextWithPayload(createVersion2Payload([
+        createVersion2Task()
+    ]));
+
+    result.elements.exportBackupButton.events.click();
+
+    const downloadLink = result.createdElements.find(function(element) {
+        return element.tagName === "A";
+    });
+    assert.ok(downloadLink);
+    assert.strictEqual(
+        downloadLink.download,
+        "task-manager-backup-2023-11-14-221500.json"
+    );
+    assert.strictEqual(downloadLink.clicked, true);
+    assert.strictEqual(result.createdUrls.length, 1);
+    assert.deepStrictEqual(result.revokedUrls, [result.createdUrls[0].url]);
+    assert.strictEqual(result.bodyChildren.length, 0);
+});
+
+test("RQ-004 restore file hop le cap nhat storage danh sach va thong ke", async function() {
+    const oldPayload = createVersion2Payload([
+        createVersion2Task({ id: "old", name: "Cu" })
+    ]);
+    const restoredTasks = [
+        createVersion2Task({ id: "new-1", name: "Moi 1" }),
+        createVersion2Task({
+            id: "new-2",
+            name: "Moi 2",
+            completed: true,
+            updatedAt: "2023-11-14T22:14:20.000Z"
+        })
+    ];
+    const fileContent = createBackupFileContent(restoredTasks);
+    const file = createRestoreFile(fileContent, { name: "du-lieu-hop-le.json" });
+    const result = createContextWithPayload(oldPayload);
+
+    await selectRestoreFile(result, file);
+
+    assert.deepStrictEqual(parseMainStorage(result.storage), {
+        version: STORAGE_VERSION,
+        tasks: restoredTasks
+    });
+    assert.strictEqual(getRestoreBackupKeys(result.storage).length, 1);
+    assert.strictEqual(
+        result.storage[getRestoreBackupKeys(result.storage)[0]],
+        oldPayload
+    );
+    assert.strictEqual(result.elements.taskList.children.length, 2);
+    assert.strictEqual(result.elements.totalTasks.textContent, 2);
+    assert.strictEqual(result.elements.completedTasks.textContent, 1);
+    assert.strictEqual(result.confirmMessages.length, 1);
+    assert.ok(result.confirmMessages[0].includes("du-lieu-hop-le.json"));
+    assert.ok(result.confirmMessages[0].includes("2023-11-14T22:13:20.000Z"));
+    assert.ok(result.confirmMessages[0].includes("Số công việc: 2"));
+    assert.ok(result.elements.backupRestoreStatus.textContent.includes("Khôi phục thành công"));
+});
+
+test("RQ-004 restore thanh cong khoi phuc kha nang luu du lieu", async function() {
+    const legacyPayload = JSON.stringify([
+        { id: 1, name: "Legacy", completed: false }
+    ]);
+    const result = createContextWithPayload(legacyPayload, {
+        failMigrationBackupWrite: true,
+        now: 1700000200000
+    });
+    const restoredTask = createVersion2Task({ id: "restored" });
+
+    await selectRestoreFile(result, createRestoreFile(
+        createBackupFileContent([restoredTask])
+    ));
+    result.elements.taskList.children[0].children[0].children[0].events.change();
+
+    assert.strictEqual(parseMainStorage(result.storage).tasks[0].completed, true);
+});
+
+test("RQ-004 backup hien tai hoan thanh truoc khi ghi restore", async function() {
+    const oldPayload = createVersion2Payload([createVersion2Task({ id: "old" })]);
+    const file = createRestoreFile(createBackupFileContent([
+        createVersion2Task({ id: "new" })
+    ]));
+    const result = createContextWithPayload(oldPayload);
+
+    await selectRestoreFile(result, file);
+
+    const backupIndex = result.storageOperations.findIndex(function(operation) {
+        return operation.type === "set" &&
+            operation.key.startsWith(RESTORE_BACKUP_PREFIX);
+    });
+    const restoreIndex = result.storageOperations.findIndex(function(operation) {
+        return operation.type === "set" && operation.key === STORAGE_KEY;
+    });
+    assert.notStrictEqual(backupIndex, -1);
+    assert.notStrictEqual(restoreIndex, -1);
+    assert.ok(backupIndex < restoreIndex);
+});
+
+test("RQ-004 tu choi JSON schema backup version va data version sai", async function() {
+    const currentPayload = createVersion2Payload([createVersion2Task()]);
+    const invalidContents = [
+        "{broken",
+        JSON.stringify({ backupFormatVersion: 1, exportedAt: "bad", data: {} }),
+        createBackupFileContent([], { backupFormatVersion: 2 }),
+        createBackupFileContent([], { data: { version: 3, tasks: [] } }),
+        createBackupFileContent([null])
+    ];
+
+    for (const content of invalidContents) {
+        const result = createContextWithPayload(currentPayload);
+        await selectRestoreFile(result, createRestoreFile(content));
+
+        assert.strictEqual(result.storage[STORAGE_KEY], currentPayload);
+        assert.strictEqual(getRestoreBackupKeys(result.storage).length, 0);
+        assert.strictEqual(result.confirmMessages.length, 0);
+        assert.strictEqual(result.elements.backupRestoreStatus.hidden, false);
+        assert.ok(result.elements.backupRestoreStatus.className.includes("error"));
+    }
+});
+
+test("RQ-004 chi chap nhan file JSON", async function() {
+    const currentPayload = createVersion2Payload([createVersion2Task()]);
+    const result = createContextWithPayload(currentPayload);
+    const file = createRestoreFile(createBackupFileContent([]), {
+        name: "backup.txt",
+        type: "text/plain"
+    });
+
+    await selectRestoreFile(result, file);
+
+    assert.strictEqual(result.storage[STORAGE_KEY], currentPayload);
+    assert.strictEqual(result.confirmMessages.length, 0);
+    assert.ok(result.elements.backupRestoreStatus.textContent.includes("file JSON"));
+});
+
+test("RQ-004 tu choi file rong va qua 1 MB", async function() {
+    const currentPayload = createVersion2Payload([createVersion2Task()]);
+    const emptyResult = createContextWithPayload(currentPayload);
+    await selectRestoreFile(emptyResult, createRestoreFile("", { size: 0 }));
+    assert.strictEqual(emptyResult.storage[STORAGE_KEY], currentPayload);
+    assert.ok(emptyResult.elements.backupRestoreStatus.textContent.includes("rỗng"));
+
+    const largeResult = createContextWithPayload(currentPayload);
+    await selectRestoreFile(largeResult, createRestoreFile("{}", {
+        size: MAX_RESTORE_FILE_SIZE + 1
+    }));
+    assert.strictEqual(largeResult.storage[STORAGE_KEY], currentPayload);
+    assert.ok(largeResult.elements.backupRestoreStatus.textContent.includes("1 MB"));
+});
+
+test("RQ-004 huy xac nhan khong thay doi du lieu", async function() {
+    const currentPayload = createVersion2Payload([createVersion2Task({ id: "old" })]);
+    const result = createContextWithPayload(currentPayload, { confirmResult: false });
+    const file = createRestoreFile(createBackupFileContent([
+        createVersion2Task({ id: "new" })
+    ]));
+
+    await selectRestoreFile(result, file);
+
+    assert.strictEqual(result.storage[STORAGE_KEY], currentPayload);
+    assert.strictEqual(getRestoreBackupKeys(result.storage).length, 0);
+    assert.strictEqual(result.elements.taskList.children.length, 1);
+    assert.ok(result.elements.backupRestoreStatus.textContent.includes("Đã hủy"));
+});
+
+test("RQ-004 backup restore that bai khong lam mat du lieu", async function() {
+    const currentPayload = createVersion2Payload([createVersion2Task({ id: "old" })]);
+    const result = createContextWithPayload(currentPayload, {
+        failRestoreBackupWrite: true
+    });
+    const file = createRestoreFile(createBackupFileContent([
+        createVersion2Task({ id: "new" })
+    ]));
+
+    await selectRestoreFile(result, file);
+
+    assert.strictEqual(result.storage[STORAGE_KEY], currentPayload);
+    assert.strictEqual(getRestoreBackupKeys(result.storage).length, 0);
+    assert.strictEqual(result.elements.taskList.children.length, 1);
+    assert.ok(result.elements.backupRestoreStatus.textContent.includes("chưa bị thay đổi"));
+});
+
+test("RQ-004 ghi du lieu restore that bai giu du lieu hien tai", async function() {
+    const currentPayload = createVersion2Payload([createVersion2Task({ id: "old" })]);
+    const result = createContextWithPayload(currentPayload, {
+        failRestoreDataWrite: true
+    });
+    const file = createRestoreFile(createBackupFileContent([
+        createVersion2Task({ id: "new" })
+    ]));
+
+    await selectRestoreFile(result, file);
+
+    assert.strictEqual(result.storage[STORAGE_KEY], currentPayload);
+    assert.strictEqual(getRestoreBackupKeys(result.storage).length, 1);
+    assert.strictEqual(result.elements.taskList.children.length, 1);
+    assert.ok(result.elements.backupRestoreStatus.textContent.includes("vẫn được giữ nguyên"));
+});
+
+test("RQ-004 khong ghi de restore backup trung timestamp", async function() {
+    const currentPayload = createVersion2Payload([createVersion2Task({ id: "old" })]);
+    const existingBackupKey = RESTORE_BACKUP_PREFIX + DEFAULT_NOW;
+    const result = createContextWithPayload(currentPayload, {
+        initialStorage: {
+            [existingBackupKey]: "ban sao restore cu"
+        }
+    });
+    const file = createRestoreFile(createBackupFileContent([
+        createVersion2Task({ id: "new" })
+    ]));
+
+    await selectRestoreFile(result, file);
+
+    assert.strictEqual(result.storage[existingBackupKey], "ban sao restore cu");
+    assert.strictEqual(result.storage[existingBackupKey + "_1"], currentPayload);
+});
+
+test("RQ-004 che do chi doc cho export nhung chan restore", async function() {
+    const futureTask = createVersion2Task({ futureMetadata: "giu-nguyen" });
+    const futurePayload = JSON.stringify({ version: 3, tasks: [futureTask] });
+    const result = createContextWithPayload(futurePayload);
+
+    assert.strictEqual(result.elements.exportBackupButton.disabled, false);
+    assert.strictEqual(result.elements.restoreBackupButton.disabled, true);
+    assert.strictEqual(result.elements.restoreFileInput.disabled, true);
+    assert.strictEqual(result.elements.restoreReadOnlyHint.hidden, false);
+    assert.ok(result.elements.restoreReadOnlyHint.textContent.includes("Chế độ chỉ đọc"));
+
+    result.elements.exportBackupButton.events.click();
+    assert.strictEqual(result.createdBlobs.length, 1);
+    const exportedBackup = JSON.parse(await result.createdBlobs[0].text());
+    assert.strictEqual(exportedBackup.data.version, STORAGE_VERSION);
+    assert.strictEqual(exportedBackup.data.tasks.length, 1);
+
+    result.elements.restoreBackupButton.events.click();
+    assert.strictEqual(result.elements.restoreFileInput.clicked, false);
+
+    await selectRestoreFile(result, createRestoreFile(createBackupFileContent([])));
+    assert.strictEqual(result.storage[STORAGE_KEY], futurePayload);
+    assert.strictEqual(getRestoreBackupKeys(result.storage).length, 0);
+    assert.strictEqual(result.confirmMessages.length, 0);
+    assert.ok(result.elements.backupRestoreStatus.textContent.includes("Chế độ chỉ đọc"));
+});
+
+runTests().catch(function(error) {
+    console.error(error);
+    process.exitCode = 1;
+});
