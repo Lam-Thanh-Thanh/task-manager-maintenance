@@ -719,19 +719,6 @@ function saveTaskEdit(taskId, editedName) {
     renderTasks();
 }
 
-/*function addTask() {
-    const task = {
-        id: Date.now(),
-        name: taskInput.value,
-        completed: false
-    };
-
-    tasks.push(task);
-    saveTasks();
-    renderTasks();
-    taskInput.value = "";
-    taskInput.focus();
-}*/
 function addTask() {
     if (readOnlyMode) {
         return;
