@@ -11,11 +11,43 @@
         <header class="app-header">
             <h1>Task Manager</h1>
             <p>Ứng dụng quản lý công việc đơn giản</p>
+            <button
+                id="dataStatusToggle"
+                class="data-status-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="dataStatus"
+            >
+                <span id="dataStatusSummary">● Dữ liệu bình thường</span>
+            </button>
         </header>
 
         <section id="storageWarning" class="storage-warning" role="alert" hidden>
             <p id="storageWarningMessage"></p>
             <button id="closeStorageWarningButton" type="button">Đóng</button>
+        </section>
+
+        <section id="dataStatus" class="data-status" aria-labelledby="dataStatusTitle" hidden>
+            <h2 id="dataStatusTitle">Trạng thái dữ liệu</h2>
+            <dl class="data-status-grid">
+                <div class="data-status-item">
+                    <dt>Tình trạng lưu trữ</dt>
+                    <dd id="dataStorageState">Đang kiểm tra</dd>
+                </div>
+                <div class="data-status-item">
+                    <dt>Phiên bản dữ liệu</dt>
+                    <dd id="dataVersionState">Đang kiểm tra</dd>
+                </div>
+                <div class="data-status-item">
+                    <dt>Chế độ sử dụng</dt>
+                    <dd id="dataUsageMode">Đang kiểm tra</dd>
+                </div>
+                <div class="data-status-item">
+                    <dt>Bản sao bảo vệ</dt>
+                    <dd id="dataProtectionState">Đang kiểm tra</dd>
+                </div>
+            </dl>
+            <p id="dataStatusMessage" class="data-status-message" aria-live="polite"></p>
         </section>
 
         <section class="task-form" aria-label="Thêm công việc mới">

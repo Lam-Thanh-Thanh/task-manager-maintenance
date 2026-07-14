@@ -23,6 +23,14 @@ const restoreBackupButton = document.getElementById("restoreBackupButton");
 const restoreFileInput = document.getElementById("restoreFileInput");
 const backupRestoreStatus = document.getElementById("backupRestoreStatus");
 const restoreReadOnlyHint = document.getElementById("restoreReadOnlyHint");
+const dataStatusToggle = document.getElementById("dataStatusToggle");
+const dataStatusSummary = document.getElementById("dataStatusSummary");
+const dataStatus = document.getElementById("dataStatus");
+const dataStorageState = document.getElementById("dataStorageState");
+const dataVersionState = document.getElementById("dataVersionState");
+const dataUsageMode = document.getElementById("dataUsageMode");
+const dataProtectionState = document.getElementById("dataProtectionState");
+const dataStatusMessage = document.getElementById("dataStatusMessage");
 
 let storageWritesEnabled = true;
 let readOnlyMode = false;
@@ -30,7 +38,135 @@ let searchQuery = "";
 let selectedFilter = "all";
 let selectedSort = "newest";
 let editingTaskId = null;
+let dataStatusExpanded = false;
+let dataLoadStatus = createNormalDataStatus();
 let tasks = loadTasks();
+dataStatusExpanded = dataLoadStatus.expandedByDefault;
+
+function createNormalDataStatus() {
+    return {
+        type: "normal",
+        summary: "● Dữ liệu bình thường",
+        expandedByDefault: false,
+        storage: "Hoạt động bình thường",
+        version: "Version 2",
+        mode: "Đọc và ghi",
+        protection: "Không tạo bản sao trong lần tải này",
+        message: "Dữ liệu sẵn sàng để sử dụng và các thay đổi sẽ được lưu trên trình duyệt này."
+    };
+}
+
+function createCorruptedDataStatus(quarantineResult) {
+    if (!quarantineResult.backupCreated) {
+        return {
+            type: "warning",
+            summary: "⚠ Không thể cách ly dữ liệu",
+            expandedByDefault: true,
+            storage: "Dữ liệu lỗi chưa thể cách ly",
+            version: "Version 2",
+            mode: "Đọc và ghi",
+            protection: "Chưa thể tạo bản sao dữ liệu lỗi",
+            message: "Dữ liệu gốc vẫn được giữ nguyên và ứng dụng đã mở với danh sách trống."
+        };
+    }
+
+    if (!quarantineResult.originalRemoved) {
+        return {
+            type: "warning",
+            summary: "⚠ Dữ liệu cần được kiểm tra",
+            expandedByDefault: true,
+            storage: "Dữ liệu lỗi đã được sao lưu",
+            version: "Version 2",
+            mode: "Đọc và ghi",
+            protection: "Đã tạo bản sao dữ liệu lỗi",
+            message: "Bản sao đã an toàn, nhưng dữ liệu lỗi chưa thể xóa khỏi khóa lưu trữ chính."
+        };
+    }
+
+    return {
+        type: "quarantined",
+        summary: "⚠ Dữ liệu đã được cách ly",
+        expandedByDefault: true,
+        storage: "Dữ liệu lỗi đã được cách ly",
+        version: "Version 2",
+        mode: "Đọc và ghi",
+        protection: "Đã tạo bản sao dữ liệu lỗi",
+        message: "Ứng dụng đã bảo vệ dữ liệu không hợp lệ và mở với danh sách trống an toàn."
+    };
+}
+
+function createMigratedDataStatus() {
+    return {
+        type: "migrated",
+        summary: "✓ Đã nâng cấp dữ liệu",
+        expandedByDefault: true,
+        storage: "Đã chuyển đổi dữ liệu cũ",
+        version: "Version 2",
+        mode: "Đọc và ghi",
+        protection: "Đã tạo bản sao trước chuyển đổi",
+        message: "Dữ liệu cũ vừa được chuyển đổi trong lần tải này và đã sẵn sàng để sử dụng."
+    };
+}
+
+function createMigrationFailureDataStatus(migrationResult) {
+    return {
+        type: "warning",
+        summary: "⚠ Chưa thể nâng cấp dữ liệu",
+        expandedByDefault: true,
+        storage: "Chuyển đổi dữ liệu chưa hoàn tất",
+        version: "Dữ liệu cũ",
+        mode: "Không lưu thay đổi",
+        protection: migrationResult.backupKey
+            ? "Đã tạo bản sao trước chuyển đổi"
+            : "Chưa thể tạo bản sao trước chuyển đổi",
+        message: "Dữ liệu gốc được giữ nguyên và thay đổi trong phiên này sẽ không được lưu."
+    };
+}
+
+function createFutureVersionDataStatus(version) {
+    return {
+        type: "readonly",
+        summary: "⚠ Chế độ chỉ đọc – Version " + version,
+        expandedByDefault: true,
+        storage: "Phiên bản chưa tương thích",
+        version: "Version " + version,
+        mode: "Chỉ đọc",
+        protection: "Dữ liệu gốc được giữ nguyên",
+        message: "Có thể xem và xuất dữ liệu, nhưng các thao tác ghi đã bị vô hiệu hóa."
+    };
+}
+
+function createStorageReadFailureDataStatus() {
+    return {
+        type: "warning",
+        summary: "⚠ Không thể đọc dữ liệu",
+        expandedByDefault: true,
+        storage: "Không thể đọc dữ liệu",
+        version: "Không xác định",
+        mode: "Không lưu thay đổi",
+        protection: "Dữ liệu gốc được giữ nguyên",
+        message: "Ứng dụng đã mở với danh sách trống và không ghi đè dữ liệu hiện có."
+    };
+}
+
+function renderDataStatus() {
+    dataStatusToggle.className =
+        "data-status-toggle data-status-toggle-" + dataLoadStatus.type;
+    dataStatusSummary.textContent = dataLoadStatus.summary;
+    dataStatus.className = "data-status data-status-" + dataLoadStatus.type;
+    dataStorageState.textContent = dataLoadStatus.storage;
+    dataVersionState.textContent = dataLoadStatus.version;
+    dataUsageMode.textContent = dataLoadStatus.mode;
+    dataProtectionState.textContent = dataLoadStatus.protection;
+    dataStatusMessage.textContent = dataLoadStatus.message;
+    setDataStatusExpanded(dataStatusExpanded);
+}
+
+function setDataStatusExpanded(isExpanded) {
+    dataStatusExpanded = isExpanded;
+    dataStatus.hidden = !dataStatusExpanded;
+    dataStatusToggle.setAttribute("aria-expanded", String(dataStatusExpanded));
+}
 
 function isValidTask(task) {
     if (typeof task !== "object" || task === null || Array.isArray(task)) {
@@ -276,6 +412,14 @@ function getReadableFutureTasks(storedData) {
     return storedData.tasks;
 }
 
+function handleCorruptedStoredData(savedTasks) {
+    const quarantineResult = quarantineCorruptedData(savedTasks);
+
+    dataLoadStatus = createCorruptedDataStatus(quarantineResult);
+    showStorageWarning(quarantineResult);
+    return [];
+}
+
 function loadTasks() {
     let savedTasks;
 
@@ -283,6 +427,7 @@ function loadTasks() {
         savedTasks = localStorage.getItem(STORAGE_KEY);
     } catch (error) {
         storageWritesEnabled = false;
+        dataLoadStatus = createStorageReadFailureDataStatus();
         showStorageReadWarning();
         return [];
     }
@@ -294,32 +439,33 @@ function loadTasks() {
     const parseResult = parseStoredData(savedTasks);
 
     if (!parseResult.isValidJson) {
-        showStorageWarning(quarantineCorruptedData(savedTasks));
-        return [];
+        return handleCorruptedStoredData(savedTasks);
     }
 
     const storedData = parseResult.data;
 
     if (Array.isArray(storedData)) {
         if (!storedData.every(isValidTask)) {
-            showStorageWarning(quarantineCorruptedData(savedTasks));
-            return [];
+            return handleCorruptedStoredData(savedTasks);
         }
 
         const migrationResult = migrateLegacyTasks(storedData, savedTasks);
 
         if (migrationResult.success) {
+            dataLoadStatus = createMigratedDataStatus();
             showMigrationSuccess();
             return migrationResult.tasks;
         }
 
         storageWritesEnabled = false;
+        dataLoadStatus = createMigrationFailureDataStatus(migrationResult);
         showMigrationFailure(migrationResult.reason);
         return migrationResult.tasks;
     }
 
     if (isFutureVersion(storedData)) {
         enableReadOnlyMode();
+        dataLoadStatus = createFutureVersionDataStatus(storedData.version);
         showFutureVersionWarning();
         return getReadableFutureTasks(storedData);
     }
@@ -328,8 +474,7 @@ function loadTasks() {
         return storedData.tasks;
     }
 
-    showStorageWarning(quarantineCorruptedData(savedTasks));
-    return [];
+    return handleCorruptedStoredData(savedTasks);
 }
 
 function saveTasks() {
@@ -896,6 +1041,10 @@ function renderStats() {
     completedTasks.textContent = completedCount;
 }
 
+dataStatusToggle.addEventListener("click", function() {
+    setDataStatusExpanded(!dataStatusExpanded);
+});
+
 addTaskButton.addEventListener("click", addTask);
 
 searchInput.addEventListener("input", function() {
@@ -951,4 +1100,5 @@ taskInput.addEventListener("keydown", function(event) {
     }
 });
 
+renderDataStatus();
 renderTasks();

@@ -28,6 +28,8 @@ function createElement(tagName) {
         download: "",
         clicked: false,
         events: {},
+        innerHTMLWrites: [],
+        attributes: {},
         classList: {
             values: [],
             add(name) {
@@ -40,6 +42,14 @@ function createElement(tagName) {
         },
         addEventListener(type, handler) {
             this.events[type] = handler;
+        },
+        setAttribute(name, value) {
+            this.attributes[name] = String(value);
+        },
+        getAttribute(name) {
+            return Object.prototype.hasOwnProperty.call(this.attributes, name)
+                ? this.attributes[name]
+                : null;
         },
         click() {
             this.clicked = true;
@@ -58,6 +68,7 @@ function createElement(tagName) {
         },
         set(value) {
             innerHTML = value;
+            element.innerHTMLWrites.push(value);
 
             if (value === "") {
                 element.children = [];
@@ -115,7 +126,15 @@ function createTestContext(options = {}) {
         restoreBackupButton: createElement("button"),
         restoreFileInput: createElement("input"),
         backupRestoreStatus: createElement("p"),
-        restoreReadOnlyHint: createElement("p")
+        restoreReadOnlyHint: createElement("p"),
+        dataStatusToggle: createElement("button"),
+        dataStatusSummary: createElement("span"),
+        dataStatus: createElement("section"),
+        dataStorageState: createElement("dd"),
+        dataVersionState: createElement("dd"),
+        dataUsageMode: createElement("dd"),
+        dataProtectionState: createElement("dd"),
+        dataStatusMessage: createElement("p")
     };
 
     elements.storageWarning.className = "storage-warning";
@@ -126,6 +145,10 @@ function createTestContext(options = {}) {
     elements.restoreFileInput.hidden = true;
     elements.backupRestoreStatus.hidden = true;
     elements.restoreReadOnlyHint.hidden = true;
+    elements.dataStatus.className = "data-status";
+    elements.dataStatus.hidden = true;
+    elements.dataStatusToggle.setAttribute("aria-controls", "dataStatus");
+    elements.dataStatusToggle.setAttribute("aria-expanded", "false");
 
     const storage = Object.assign({}, options.initialStorage);
     const alerts = [];
@@ -1382,6 +1405,199 @@ test("RQ-003 export backup chua ten sau khi sua", async function() {
 
     const exportedBackup = JSON.parse(await result.createdBlobs[0].text());
     assert.strictEqual(exportedBackup.data.tasks[0].name, "Sau khi sua");
+});
+
+test("Trang thai du lieu binh thuong khong bi anh huong boi backup cu", function() {
+    const initialStorage = {};
+    initialStorage[STORAGE_KEY] = createVersion2Payload([createVersion2Task()]);
+    initialStorage[MIGRATION_BACKUP_PREFIX + "old"] = "[]";
+
+    const result = createTestContext({ initialStorage });
+
+    assert.ok(result.elements.dataStatus.className.includes("data-status-normal"));
+    assert.strictEqual(result.elements.dataStorageState.textContent, "Hoạt động bình thường");
+    assert.strictEqual(result.elements.dataVersionState.textContent, "Version 2");
+    assert.strictEqual(result.elements.dataUsageMode.textContent, "Đọc và ghi");
+    assert.strictEqual(
+        result.elements.dataProtectionState.textContent,
+        "Không tạo bản sao trong lần tải này"
+    );
+});
+
+test("Trang thai hien thi du lieu loi da duoc cach ly", function() {
+    const result = createContextWithPayload("{broken", { now: DEFAULT_NOW });
+
+    assert.ok(result.elements.dataStatus.className.includes("data-status-quarantined"));
+    assert.strictEqual(
+        result.elements.dataStorageState.textContent,
+        "Dữ liệu lỗi đã được cách ly"
+    );
+    assert.strictEqual(result.elements.dataVersionState.textContent, "Version 2");
+    assert.strictEqual(result.elements.dataUsageMode.textContent, "Đọc và ghi");
+    assert.strictEqual(
+        result.elements.dataProtectionState.textContent,
+        "Đã tạo bản sao dữ liệu lỗi"
+    );
+});
+
+test("Trang thai hien thi migration thanh cong trong lan tai hien tai", function() {
+    const legacyTasks = [{
+        id: 1700000000000,
+        name: "Du lieu cu",
+        completed: false
+    }];
+    const result = createContextWithPayload(JSON.stringify(legacyTasks));
+
+    assert.ok(result.elements.dataStatus.className.includes("data-status-migrated"));
+    assert.strictEqual(
+        result.elements.dataStorageState.textContent,
+        "Đã chuyển đổi dữ liệu cũ"
+    );
+    assert.strictEqual(result.elements.dataVersionState.textContent, "Version 2");
+    assert.strictEqual(result.elements.dataUsageMode.textContent, "Đọc và ghi");
+    assert.strictEqual(
+        result.elements.dataProtectionState.textContent,
+        "Đã tạo bản sao trước chuyển đổi"
+    );
+});
+
+test("Trang thai hien thi version tuong lai va che do chi doc", function() {
+    const futureVersion = 7;
+    const futurePayload = JSON.stringify({
+        version: futureVersion,
+        tasks: [createVersion2Task()]
+    });
+    const result = createContextWithPayload(futurePayload);
+
+    assert.ok(result.elements.dataStatus.className.includes("data-status-readonly"));
+    assert.strictEqual(
+        result.elements.dataStorageState.textContent,
+        "Phiên bản chưa tương thích"
+    );
+    assert.strictEqual(result.elements.dataVersionState.textContent, "Version 7");
+    assert.strictEqual(result.elements.dataUsageMode.textContent, "Chỉ đọc");
+    assert.strictEqual(result.elements.taskInput.disabled, true);
+    assert.strictEqual(result.elements.addTaskButton.disabled, true);
+    assert.strictEqual(result.elements.restoreBackupButton.disabled, true);
+    assert.strictEqual(result.storage[STORAGE_KEY], futurePayload);
+});
+
+test("Trang thai khong dung innerHTML hoac hien thi du lieu nguoi dung", function() {
+    const userContent = '<img src=x onerror="alert(1)">';
+    const result = createContextWithPayload(createVersion2Payload([
+        createVersion2Task({ name: userContent })
+    ]));
+    const statusElements = [
+        result.elements.dataStatusToggle,
+        result.elements.dataStatusSummary,
+        result.elements.dataStatus,
+        result.elements.dataStorageState,
+        result.elements.dataVersionState,
+        result.elements.dataUsageMode,
+        result.elements.dataProtectionState,
+        result.elements.dataStatusMessage
+    ];
+    const displayedStatus = statusElements.map(function(element) {
+        return element.textContent;
+    }).join(" ");
+
+    statusElements.forEach(function(element) {
+        assert.strictEqual(element.innerHTMLWrites.length, 0);
+    });
+    assert.strictEqual(displayedStatus.includes(userContent), false);
+    assert.deepStrictEqual(getRenderedTaskNames(result.elements), [userContent]);
+});
+
+test("Nut trang thai binh thuong thu gon mac dinh", function() {
+    const result = createContextWithPayload(createVersion2Payload([createVersion2Task()]));
+
+    assert.strictEqual(result.elements.dataStatusSummary.textContent, "● Dữ liệu bình thường");
+    assert.strictEqual(result.elements.dataStatus.hidden, true);
+    assert.strictEqual(
+        result.elements.dataStatusToggle.getAttribute("aria-expanded"),
+        "false"
+    );
+    assert.strictEqual(
+        result.elements.dataStatusToggle.getAttribute("aria-controls"),
+        "dataStatus"
+    );
+});
+
+test("Nut trang thai mo va dong vung chi tiet", function() {
+    const result = createContextWithPayload(createVersion2Payload([createVersion2Task()]));
+
+    result.elements.dataStatusToggle.click();
+    assert.strictEqual(result.elements.dataStatus.hidden, false);
+    assert.strictEqual(
+        result.elements.dataStatusToggle.getAttribute("aria-expanded"),
+        "true"
+    );
+
+    result.elements.dataStatusToggle.click();
+    assert.strictEqual(result.elements.dataStatus.hidden, true);
+    assert.strictEqual(
+        result.elements.dataStatusToggle.getAttribute("aria-expanded"),
+        "false"
+    );
+});
+
+test("Nut trang thai du lieu cach ly tu mo chi tiet", function() {
+    const result = createContextWithPayload("{broken");
+
+    assert.strictEqual(
+        result.elements.dataStatusSummary.textContent,
+        "⚠ Dữ liệu đã được cách ly"
+    );
+    assert.strictEqual(result.elements.dataStatus.hidden, false);
+    assert.strictEqual(
+        result.elements.dataStatusToggle.getAttribute("aria-expanded"),
+        "true"
+    );
+});
+
+test("Nut trang thai migration tu mo chi tiet", function() {
+    const result = createContextWithPayload(JSON.stringify([{
+        id: 1700000000000,
+        name: "Du lieu cu",
+        completed: false
+    }]));
+
+    assert.strictEqual(
+        result.elements.dataStatusSummary.textContent,
+        "✓ Đã nâng cấp dữ liệu"
+    );
+    assert.strictEqual(result.elements.dataStatus.hidden, false);
+    assert.strictEqual(
+        result.elements.dataStatusToggle.getAttribute("aria-expanded"),
+        "true"
+    );
+});
+
+test("Nut trang thai future version tu mo va hien thi chi doc", function() {
+    const futureVersion = 9;
+    const result = createContextWithPayload(JSON.stringify({
+        version: futureVersion,
+        tasks: [createVersion2Task()]
+    }));
+
+    assert.strictEqual(
+        result.elements.dataStatusSummary.textContent,
+        "⚠ Chế độ chỉ đọc – Version 9"
+    );
+    assert.strictEqual(result.elements.dataStatus.hidden, false);
+    assert.strictEqual(
+        result.elements.dataStatusToggle.getAttribute("aria-expanded"),
+        "true"
+    );
+    assert.strictEqual(result.elements.dataUsageMode.textContent, "Chỉ đọc");
+    assert.strictEqual(result.elements.taskInput.disabled, true);
+
+    result.elements.dataStatusToggle.click();
+    assert.strictEqual(result.elements.dataStatus.hidden, true);
+    assert.strictEqual(
+        result.elements.dataStatusSummary.textContent,
+        "⚠ Chế độ chỉ đọc – Version 9"
+    );
 });
 
 runTests().catch(function(error) {
