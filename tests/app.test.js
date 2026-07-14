@@ -29,6 +29,7 @@ function createElement(tagName) {
         clicked: false,
         events: {},
         innerHTMLWrites: [],
+        attributes: {},
         classList: {
             values: [],
             add(name) {
@@ -41,6 +42,14 @@ function createElement(tagName) {
         },
         addEventListener(type, handler) {
             this.events[type] = handler;
+        },
+        setAttribute(name, value) {
+            this.attributes[name] = String(value);
+        },
+        getAttribute(name) {
+            return Object.prototype.hasOwnProperty.call(this.attributes, name)
+                ? this.attributes[name]
+                : null;
         },
         click() {
             this.clicked = true;
@@ -118,6 +127,8 @@ function createTestContext(options = {}) {
         restoreFileInput: createElement("input"),
         backupRestoreStatus: createElement("p"),
         restoreReadOnlyHint: createElement("p"),
+        dataStatusToggle: createElement("button"),
+        dataStatusSummary: createElement("span"),
         dataStatus: createElement("section"),
         dataStorageState: createElement("dd"),
         dataVersionState: createElement("dd"),
@@ -135,6 +146,9 @@ function createTestContext(options = {}) {
     elements.backupRestoreStatus.hidden = true;
     elements.restoreReadOnlyHint.hidden = true;
     elements.dataStatus.className = "data-status";
+    elements.dataStatus.hidden = true;
+    elements.dataStatusToggle.setAttribute("aria-controls", "dataStatus");
+    elements.dataStatusToggle.setAttribute("aria-expanded", "false");
 
     const storage = Object.assign({}, options.initialStorage);
     const alerts = [];
@@ -1474,6 +1488,8 @@ test("Trang thai khong dung innerHTML hoac hien thi du lieu nguoi dung", functio
         createVersion2Task({ name: userContent })
     ]));
     const statusElements = [
+        result.elements.dataStatusToggle,
+        result.elements.dataStatusSummary,
         result.elements.dataStatus,
         result.elements.dataStorageState,
         result.elements.dataVersionState,
@@ -1490,6 +1506,98 @@ test("Trang thai khong dung innerHTML hoac hien thi du lieu nguoi dung", functio
     });
     assert.strictEqual(displayedStatus.includes(userContent), false);
     assert.deepStrictEqual(getRenderedTaskNames(result.elements), [userContent]);
+});
+
+test("Nut trang thai binh thuong thu gon mac dinh", function() {
+    const result = createContextWithPayload(createVersion2Payload([createVersion2Task()]));
+
+    assert.strictEqual(result.elements.dataStatusSummary.textContent, "● Dữ liệu bình thường");
+    assert.strictEqual(result.elements.dataStatus.hidden, true);
+    assert.strictEqual(
+        result.elements.dataStatusToggle.getAttribute("aria-expanded"),
+        "false"
+    );
+    assert.strictEqual(
+        result.elements.dataStatusToggle.getAttribute("aria-controls"),
+        "dataStatus"
+    );
+});
+
+test("Nut trang thai mo va dong vung chi tiet", function() {
+    const result = createContextWithPayload(createVersion2Payload([createVersion2Task()]));
+
+    result.elements.dataStatusToggle.click();
+    assert.strictEqual(result.elements.dataStatus.hidden, false);
+    assert.strictEqual(
+        result.elements.dataStatusToggle.getAttribute("aria-expanded"),
+        "true"
+    );
+
+    result.elements.dataStatusToggle.click();
+    assert.strictEqual(result.elements.dataStatus.hidden, true);
+    assert.strictEqual(
+        result.elements.dataStatusToggle.getAttribute("aria-expanded"),
+        "false"
+    );
+});
+
+test("Nut trang thai du lieu cach ly tu mo chi tiet", function() {
+    const result = createContextWithPayload("{broken");
+
+    assert.strictEqual(
+        result.elements.dataStatusSummary.textContent,
+        "⚠ Dữ liệu đã được cách ly"
+    );
+    assert.strictEqual(result.elements.dataStatus.hidden, false);
+    assert.strictEqual(
+        result.elements.dataStatusToggle.getAttribute("aria-expanded"),
+        "true"
+    );
+});
+
+test("Nut trang thai migration tu mo chi tiet", function() {
+    const result = createContextWithPayload(JSON.stringify([{
+        id: 1700000000000,
+        name: "Du lieu cu",
+        completed: false
+    }]));
+
+    assert.strictEqual(
+        result.elements.dataStatusSummary.textContent,
+        "✓ Đã nâng cấp dữ liệu"
+    );
+    assert.strictEqual(result.elements.dataStatus.hidden, false);
+    assert.strictEqual(
+        result.elements.dataStatusToggle.getAttribute("aria-expanded"),
+        "true"
+    );
+});
+
+test("Nut trang thai future version tu mo va hien thi chi doc", function() {
+    const futureVersion = 9;
+    const result = createContextWithPayload(JSON.stringify({
+        version: futureVersion,
+        tasks: [createVersion2Task()]
+    }));
+
+    assert.strictEqual(
+        result.elements.dataStatusSummary.textContent,
+        "⚠ Chế độ chỉ đọc – Version 9"
+    );
+    assert.strictEqual(result.elements.dataStatus.hidden, false);
+    assert.strictEqual(
+        result.elements.dataStatusToggle.getAttribute("aria-expanded"),
+        "true"
+    );
+    assert.strictEqual(result.elements.dataUsageMode.textContent, "Chỉ đọc");
+    assert.strictEqual(result.elements.taskInput.disabled, true);
+
+    result.elements.dataStatusToggle.click();
+    assert.strictEqual(result.elements.dataStatus.hidden, true);
+    assert.strictEqual(
+        result.elements.dataStatusSummary.textContent,
+        "⚠ Chế độ chỉ đọc – Version 9"
+    );
 });
 
 runTests().catch(function(error) {

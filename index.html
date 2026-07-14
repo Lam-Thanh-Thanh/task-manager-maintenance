@@ -11,6 +11,15 @@
         <header class="app-header">
             <h1>Task Manager</h1>
             <p>Ứng dụng quản lý công việc đơn giản</p>
+            <button
+                id="dataStatusToggle"
+                class="data-status-toggle"
+                type="button"
+                aria-expanded="false"
+                aria-controls="dataStatus"
+            >
+                <span id="dataStatusSummary">● Dữ liệu bình thường</span>
+            </button>
         </header>
 
         <section id="storageWarning" class="storage-warning" role="alert" hidden>
@@ -18,7 +27,7 @@
             <button id="closeStorageWarningButton" type="button">Đóng</button>
         </section>
 
-        <section id="dataStatus" class="data-status" aria-labelledby="dataStatusTitle">
+        <section id="dataStatus" class="data-status" aria-labelledby="dataStatusTitle" hidden>
             <h2 id="dataStatusTitle">Trạng thái dữ liệu</h2>
             <dl class="data-status-grid">
                 <div class="data-status-item">
