@@ -18,6 +18,29 @@
             <button id="closeStorageWarningButton" type="button">Đóng</button>
         </section>
 
+        <section id="dataStatus" class="data-status" aria-labelledby="dataStatusTitle">
+            <h2 id="dataStatusTitle">Trạng thái dữ liệu</h2>
+            <dl class="data-status-grid">
+                <div class="data-status-item">
+                    <dt>Tình trạng lưu trữ</dt>
+                    <dd id="dataStorageState">Đang kiểm tra</dd>
+                </div>
+                <div class="data-status-item">
+                    <dt>Phiên bản dữ liệu</dt>
+                    <dd id="dataVersionState">Đang kiểm tra</dd>
+                </div>
+                <div class="data-status-item">
+                    <dt>Chế độ sử dụng</dt>
+                    <dd id="dataUsageMode">Đang kiểm tra</dd>
+                </div>
+                <div class="data-status-item">
+                    <dt>Bản sao bảo vệ</dt>
+                    <dd id="dataProtectionState">Đang kiểm tra</dd>
+                </div>
+            </dl>
+            <p id="dataStatusMessage" class="data-status-message" aria-live="polite"></p>
+        </section>
+
         <section class="task-form" aria-label="Thêm công việc mới">
             <input id="taskInput" type="text" placeholder="Nhập tên công việc">
             <button id="addTaskButton" type="button">Thêm</button>
